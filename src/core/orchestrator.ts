@@ -24,6 +24,7 @@ import { reconcilePositionsOnChain, ReconciliationSummary } from './positions/re
 export interface OrchestratorConfig {
   storage: JsonStorage;
   mode?: 'paper' | 'live';
+  strategyMode?: 'rules_only' | 'ai_veto' | 'dual_agent';
   initialVirtualEth?: number;
   openRouterBaseUrl?: string;
   openRouterKeyBase?: string;
@@ -62,6 +63,7 @@ export class ScalpingOrchestrator {
   private honeypotSimBase: OnChainHoneypotSimulator;
   private honeypotSimRH: OnChainHoneypotSimulator;
 
+  private strategyMode: 'rules_only' | 'ai_veto' | 'dual_agent';
   private minAiConfidence: number;
   private defaultTradeSizeEth: number;
   private isEngineRunning: boolean = true;
@@ -73,6 +75,7 @@ export class ScalpingOrchestrator {
 
   constructor(config: OrchestratorConfig) {
     this.storage = config.storage;
+    this.strategyMode = config.strategyMode ?? 'ai_veto';
     this.tracker = new PositionTracker(this.storage);
     this.paperTrader = new PaperTrader(config.initialVirtualEth ?? 1.0);
     this.circuitBreaker = new CircuitBreaker({
@@ -179,6 +182,14 @@ export class ScalpingOrchestrator {
     return this.sniper;
   }
 
+  public getStrategyMode(): 'rules_only' | 'ai_veto' | 'dual_agent' {
+    return this.strategyMode;
+  }
+
+  public setStrategyMode(mode: 'rules_only' | 'ai_veto' | 'dual_agent'): void {
+    this.strategyMode = mode;
+  }
+
   public isRunning(): boolean {
     return this.isEngineRunning;
   }
@@ -248,7 +259,15 @@ export class ScalpingOrchestrator {
         }
       }
 
-      // 3. Prepare AI Candidate Context with Episodic Memory & Smart Money info
+      // 3. Decision Pipeline based on strategyMode
+      let decisionAction: 'BUY' | 'WAIT' | 'AVOID' = 'WAIT';
+      let confidence = 80;
+      let takeProfitPct = 20;
+      let stopLossPct = 6;
+      let suggestedAllocEth = this.defaultTradeSizeEth;
+      let reasoning = '';
+      let signalsDetected: string[] = ['Quantitative Order Flow Confirmed'];
+
       const pastLessons = this.memory.formatLessonsForPrompt();
       const smartMoneyCheck = this.smartMoneyRadar.checkTransaction(
         pair.baseToken.address,
@@ -269,19 +288,56 @@ export class ScalpingOrchestrator {
           : undefined,
       };
 
-      // 4. Dual-Agent Debate Evaluation (Hunter vs Auditor Consensus)
-      let decisionAction: 'BUY' | 'WAIT' | 'AVOID' = 'WAIT';
-      let confidence = 0;
-      let takeProfitPct = 15;
-      let stopLossPct = 5;
-      let suggestedAllocEth = this.defaultTradeSizeEth;
-      let reasoning = '';
-      let signalsDetected: string[] = [];
-
-      try {
-        const debate = await this.debateEngine.debateToken(candidateInput);
-        if (debate.auditorReasoning?.includes('AI evaluation error')) {
-          // Auditor unavailable, fallback to chain single agent
+      if (this.strategyMode === 'rules_only') {
+        // Mode A: Zero-LLM Fast Mode (Pure TypeScript, 0 API latency/cost)
+        if (metrics.buyPressureRatio5m >= 0.60 && metrics.volumeDelta5m > 0) {
+          decisionAction = 'BUY';
+          confidence = Math.min(Math.round(metrics.buyPressureRatio5m * 100), 95);
+          takeProfitPct = 20;
+          stopLossPct = 6;
+          reasoning = `Rules-only quant trigger: Buy Pressure ${(metrics.buyPressureRatio5m * 100).toFixed(0)}%, Volume Delta +$${metrics.volumeDelta5m.toFixed(0)}`;
+          signalsDetected = ['High Buy Pressure', 'Positive CVD', 'Honeypot Checked'];
+        }
+      } else if (this.strategyMode === 'ai_veto') {
+        // Mode B: Single AI Risk Auditor Veto (Focus on LLM strength, saves 50% API calls)
+        const auditor = chainId === 8453 ? this.aiBase : this.aiRobinhood;
+        const verdict = await auditor.evaluateToken(candidateInput);
+        if (verdict.action === 'AVOID') {
+          decisionAction = 'AVOID';
+          confidence = verdict.confidence;
+          reasoning = `AI Auditor Veto: ${verdict.reasoning}`;
+        } else {
+          decisionAction = 'BUY';
+          confidence = verdict.confidence;
+          takeProfitPct = verdict.takeProfitPct || 20;
+          stopLossPct = verdict.stopLossPct || 6;
+          suggestedAllocEth = verdict.suggestedAllocEth || this.defaultTradeSizeEth;
+          reasoning = `AI Auditor Approved: ${verdict.reasoning}`;
+          signalsDetected = verdict.signalsDetected || ['Auditor Cleared'];
+        }
+      } else {
+        // Mode C: Dual-Agent Debate Engine (Hunter vs Auditor Consensus)
+        try {
+          const debate = await this.debateEngine.debateToken(candidateInput);
+          if (debate.auditorReasoning?.includes('AI evaluation error')) {
+            const single = await aiClient.evaluateToken(candidateInput);
+            decisionAction = single.action;
+            confidence = single.confidence;
+            takeProfitPct = single.takeProfitPct;
+            stopLossPct = single.stopLossPct;
+            suggestedAllocEth = single.suggestedAllocEth;
+            reasoning = single.reasoning;
+            signalsDetected = single.signalsDetected;
+          } else {
+            decisionAction = debate.action;
+            confidence = debate.consensusScore;
+            takeProfitPct = debate.takeProfitPct;
+            stopLossPct = debate.stopLossPct;
+            suggestedAllocEth = debate.suggestedAllocEth;
+            reasoning = `[Hunter]: ${debate.hunterReasoning} | [Auditor]: ${debate.auditorReasoning}`;
+            signalsDetected = debate.signalsDetected;
+          }
+        } catch {
           const single = await aiClient.evaluateToken(candidateInput);
           decisionAction = single.action;
           confidence = single.confidence;
@@ -290,24 +346,7 @@ export class ScalpingOrchestrator {
           suggestedAllocEth = single.suggestedAllocEth;
           reasoning = single.reasoning;
           signalsDetected = single.signalsDetected;
-        } else {
-          decisionAction = debate.action;
-          confidence = debate.consensusScore;
-          takeProfitPct = debate.takeProfitPct;
-          stopLossPct = debate.stopLossPct;
-          suggestedAllocEth = debate.suggestedAllocEth;
-          reasoning = `[Hunter]: ${debate.hunterReasoning} | [Auditor]: ${debate.auditorReasoning}`;
-          signalsDetected = debate.signalsDetected;
         }
-      } catch {
-        const single = await aiClient.evaluateToken(candidateInput);
-        decisionAction = single.action;
-        confidence = single.confidence;
-        takeProfitPct = single.takeProfitPct;
-        stopLossPct = single.stopLossPct;
-        suggestedAllocEth = single.suggestedAllocEth;
-        reasoning = single.reasoning;
-        signalsDetected = single.signalsDetected;
       }
 
       if (decisionAction === 'AVOID' || confidence < this.minAiConfidence) {
@@ -342,6 +381,8 @@ export class ScalpingOrchestrator {
           takeProfitPct: clampedTP,
           stopLossPct: clampedSL,
           trailingStopPct: 3.0,
+          strategyMode: this.strategyMode,
+          aiScore: confidence,
         });
 
         if (buyResult.success) {

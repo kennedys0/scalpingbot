@@ -8,6 +8,8 @@ export interface BuyOrderParams {
   stopLossPct: number;
   trailingStopPct?: number;
   slippagePct?: number;
+  strategyMode?: 'rules_only' | 'ai_veto' | 'dual_agent';
+  aiScore?: number;
 }
 
 export interface BuyResult {

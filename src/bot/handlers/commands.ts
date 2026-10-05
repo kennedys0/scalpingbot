@@ -14,7 +14,7 @@ export function registerCommands(
   bot.command(['start', 'menu'], async (ctx: Context) => {
     const data = context.getDashboardData();
     const text = formatDashboard(data);
-    const keyboard = buildMainMenuKeyboard(data.isRunning, data.mode);
+    const keyboard = buildMainMenuKeyboard(data.isRunning, data.mode, data.strategyMode);
 
     await ctx.reply(text, {
       parse_mode: 'HTML',

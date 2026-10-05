@@ -8,6 +8,7 @@ export function registerCallbacks(
     getDashboardData: () => any;
     setEngineRunning: (running: boolean) => void;
     setTradingMode: (mode: 'paper' | 'live') => void;
+    setStrategyMode?: (mode: 'rules_only' | 'ai_veto' | 'dual_agent') => void;
     closeAllPositions: () => Promise<number>;
     getActivePositions: () => Promise<any[]>;
   }
@@ -15,7 +16,7 @@ export function registerCallbacks(
   bot.callbackQuery('refresh_status', async (ctx: Context) => {
     const data = context.getDashboardData();
     const text = formatDashboard(data);
-    const keyboard = buildMainMenuKeyboard(data.isRunning, data.mode);
+    const keyboard = buildMainMenuKeyboard(data.isRunning, data.mode, data.strategyMode);
     await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard }).catch(() => {});
     await ctx.answerCallbackQuery('Status refreshed! 🔄');
   });
@@ -24,7 +25,7 @@ export function registerCallbacks(
     context.setEngineRunning(true);
     const data = context.getDashboardData();
     const text = formatDashboard(data);
-    const keyboard = buildMainMenuKeyboard(data.isRunning, data.mode);
+    const keyboard = buildMainMenuKeyboard(data.isRunning, data.mode, data.strategyMode);
     await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard }).catch(() => {});
     await ctx.answerCallbackQuery('🟢 Scalping Engine STARTED!');
   });
@@ -33,7 +34,7 @@ export function registerCallbacks(
     context.setEngineRunning(false);
     const data = context.getDashboardData();
     const text = formatDashboard(data);
-    const keyboard = buildMainMenuKeyboard(data.isRunning, data.mode);
+    const keyboard = buildMainMenuKeyboard(data.isRunning, data.mode, data.strategyMode);
     await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard }).catch(() => {});
     await ctx.answerCallbackQuery('🔴 Scalping Engine STOPPED!');
   });
@@ -42,7 +43,7 @@ export function registerCallbacks(
     context.setTradingMode('live');
     const data = context.getDashboardData();
     const text = formatDashboard(data);
-    const keyboard = buildMainMenuKeyboard(data.isRunning, data.mode);
+    const keyboard = buildMainMenuKeyboard(data.isRunning, data.mode, data.strategyMode);
     await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard }).catch(() => {});
     await ctx.answerCallbackQuery('⚡ Switched to LIVE ON-CHAIN Trading Mode!');
   });
@@ -51,9 +52,36 @@ export function registerCallbacks(
     context.setTradingMode('paper');
     const data = context.getDashboardData();
     const text = formatDashboard(data);
-    const keyboard = buildMainMenuKeyboard(data.isRunning, data.mode);
+    const keyboard = buildMainMenuKeyboard(data.isRunning, data.mode, data.strategyMode);
     await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard }).catch(() => {});
     await ctx.answerCallbackQuery('📝 Switched to PAPER Simulation Mode!');
+  });
+
+  bot.callbackQuery('strat_rules_only', async (ctx: Context) => {
+    if (context.setStrategyMode) context.setStrategyMode('rules_only');
+    const data = context.getDashboardData();
+    const text = formatDashboard(data);
+    const keyboard = buildMainMenuKeyboard(data.isRunning, data.mode, data.strategyMode);
+    await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard }).catch(() => {});
+    await ctx.answerCallbackQuery('⚡ Switched to RULES-ONLY Mode (Zero LLM, Pure Quant)!');
+  });
+
+  bot.callbackQuery('strat_ai_veto', async (ctx: Context) => {
+    if (context.setStrategyMode) context.setStrategyMode('ai_veto');
+    const data = context.getDashboardData();
+    const text = formatDashboard(data);
+    const keyboard = buildMainMenuKeyboard(data.isRunning, data.mode, data.strategyMode);
+    await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard }).catch(() => {});
+    await ctx.answerCallbackQuery('🛡️ Switched to AI RISK VETO Mode (Auditor Safety Layer)!');
+  });
+
+  bot.callbackQuery('strat_dual_agent', async (ctx: Context) => {
+    if (context.setStrategyMode) context.setStrategyMode('dual_agent');
+    const data = context.getDashboardData();
+    const text = formatDashboard(data);
+    const keyboard = buildMainMenuKeyboard(data.isRunning, data.mode, data.strategyMode);
+    await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard }).catch(() => {});
+    await ctx.answerCallbackQuery('⚔️ Switched to DUAL AGENT DEBATE Mode (Hunter vs Auditor)!');
   });
 
   bot.callbackQuery('panic_sell_all', async (ctx: Context) => {

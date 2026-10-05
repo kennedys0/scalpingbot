@@ -25,17 +25,23 @@ export class SelfReflectiveMemory {
   }
 
   public async recordPostMortem(entry: PostMortemEntry): Promise<void> {
+    // Truncate overly long lessons to max 140 chars to save LLM tokens and avoid hallucination
+    const sanitizedLesson = entry.lessonLearned.length > 140
+      ? `${entry.lessonLearned.substring(0, 137)}...`
+      : entry.lessonLearned;
+
     const record: PostMortemEntry = {
       ...entry,
+      lessonLearned: sanitizedLesson,
       timestamp: entry.timestamp || Date.now(),
     };
 
     this.storage.update((data) => {
       if (!data.settings.memory) data.settings.memory = [];
       data.settings.memory.unshift(record);
-      // Keep most recent 50 trade lessons
-      if (data.settings.memory.length > 50) {
-        data.settings.memory = data.settings.memory.slice(0, 50);
+      // Sliding window: Keep only the 10 most recent trade lessons
+      if (data.settings.memory.length > 10) {
+        data.settings.memory = data.settings.memory.slice(0, 10);
       }
     });
   }

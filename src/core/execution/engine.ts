@@ -64,6 +64,8 @@ export class ExecutionEngine {
         stopLossPct: order.stopLossPct,
         trailingStopPct: order.trailingStopPct,
         mode: this.mode,
+        strategyMode: order.strategyMode,
+        aiScore: order.aiScore,
         status: 'OPEN',
         openedAt: Date.now(),
         txHash: result.txHash,

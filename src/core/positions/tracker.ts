@@ -14,6 +14,8 @@ export interface Position {
   highestPriceSeen?: number;
   partialTakeProfitDone?: boolean;
   mode: 'paper' | 'live';
+  strategyMode?: 'rules_only' | 'ai_veto' | 'dual_agent';
+  aiScore?: number;
   status: 'OPEN' | 'CLOSED';
   openedAt: number;
   closedAt?: number;

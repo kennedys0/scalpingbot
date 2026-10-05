@@ -106,7 +106,7 @@ Buka file `.env` dan masukkan:
 - `WALLET_PRIVATE_KEY`: *(Opsional)* Private key wallet EVM jika ingin Live Trading. Kosongkan jika ingin Paper Trading saja.
 
 ### 3. Jalankan Pengujian (Testing)
-Pastikan seluruh 43 unit & integration tests lulus:
+Pastikan seluruh 46 unit & integration tests lulus:
 ```bash
 npm test
 ```

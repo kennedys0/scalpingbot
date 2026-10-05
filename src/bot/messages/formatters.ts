@@ -10,6 +10,7 @@ export function escapeHtml(str: string | undefined | null): string {
 export interface DashboardData {
   isRunning: boolean;
   mode: 'paper' | 'live';
+  strategyMode?: 'rules_only' | 'ai_veto' | 'dual_agent';
   dailyNetPnlEth: number;
   openPositionsCount: number;
   baseScannerActive: boolean;
@@ -22,6 +23,7 @@ export function formatDashboard(data: DashboardData): string {
   const statusText = data.isRunning ? 'RUNNING' : 'STOPPED';
   const modeEmoji = data.mode === 'paper' ? '📝' : '⚡';
   const modeText = data.mode.toUpperCase();
+  const stratText = (data.strategyMode || 'ai_veto').replace('_', ' ').toUpperCase();
   const pnlSign = data.dailyNetPnlEth >= 0 ? '+' : '';
   const pnlEmoji = data.dailyNetPnlEth >= 0 ? '🟢' : '🔴';
 
@@ -34,6 +36,7 @@ export function formatDashboard(data: DashboardData): string {
 ────────────────────────
 <b>Status:</b> ${statusEmoji} <code>${statusText}</code>
 <b>Trading Mode:</b> ${modeEmoji} <code>${modeText}</code>
+<b>Strategy Mode:</b> 🎯 <code>${stratText}</code>
 <b>Active Positions:</b> <code>${data.openPositionsCount} Open</code>
 <b>Daily 24h PnL:</b> ${pnlEmoji} <code>${pnlSign}${data.dailyNetPnlEth.toFixed(4)} ETH</code>${alertBanner}
 <b>Chains Monitored:</b>
@@ -125,11 +128,27 @@ export function generatePerformanceReport(trades: any[]): string {
   const pnlSign = totalNetPnlEth >= 0 ? '+' : '';
   const pnlEmoji = totalNetPnlEth >= 0 ? '🟢' : '🔴';
 
+  // AI Score vs PnL Calibration Breakdown
+  const highTier = closedTrades.filter((t) => (t.aiScore ?? 0) >= 85);
+  const midTier = closedTrades.filter((t) => (t.aiScore ?? 0) >= 75 && (t.aiScore ?? 0) < 85);
+  const rulesTier = closedTrades.filter((t) => !t.aiScore || t.strategyMode === 'rules_only');
+
+  const calcTierWR = (list: any[]) => {
+    if (list.length === 0) return 'N/A';
+    const w = list.filter((t) => (t.realizedPnlEth ?? 0) > 0).length;
+    return `${((w / list.length) * 100).toFixed(0)}% (${w}/${list.length})`;
+  };
+
   return `📊 <b>DAILY PERFORMANCE REPORT</b>
 ────────────────────────
 <b>Total Trades:</b> <code>${total}</code> (${wins.length}W / ${losses.length}L)
 <b>Win Rate:</b> <code>${winRate}%</code>
 <b>Net PnL:</b> ${pnlEmoji} <code>${pnlSign}${totalNetPnlEth.toFixed(4)} ETH</code>
+
+🎯 <b>AI Calibration (Score vs Win Rate):</b>
+• High Score (≥85%): <code>${calcTierWR(highTier)}</code>
+• Moderate (75-84%): <code>${calcTierWR(midTier)}</code>
+• Rules-Only: <code>${calcTierWR(rulesTier)}</code>
 
 🏆 <b>Best Trade:</b> $${escapeHtml(best.tokenSymbol)} (+${best.realizedPnlPct?.toFixed(1)}%)
 📉 <b>Worst Trade:</b> $${escapeHtml(worst.tokenSymbol)} (${worst.realizedPnlPct?.toFixed(1)}%)

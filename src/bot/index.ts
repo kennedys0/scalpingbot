@@ -11,6 +11,7 @@ export interface TelegramBotContext {
   getTradesHistory: () => any[];
   setEngineRunning: (running: boolean) => void;
   setTradingMode: (mode: 'paper' | 'live') => void;
+  setStrategyMode?: (mode: 'rules_only' | 'ai_veto' | 'dual_agent') => void;
   closeAllPositions: () => Promise<number>;
   getActivePositions: () => Promise<any[]>;
   sniper: InstantSniper;

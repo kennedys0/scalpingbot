@@ -68,6 +68,7 @@ async function bootstrap() {
       return {
         isRunning: orchestrator.isRunning(),
         mode: orchestrator.getExecutionEngine().getMode(),
+        strategyMode: orchestrator.getStrategyMode(),
         dailyNetPnlEth: orchestrator.getCircuitBreaker().getDailyNetPnLEth(),
         openPositionsCount: storage.getData().positions.filter((p: any) => p.status === 'OPEN').length,
         baseScannerActive: orchestrator.isRunning(),
@@ -79,6 +80,7 @@ async function bootstrap() {
     blacklistManager: orchestrator.getBlacklistManager(),
     setEngineRunning: (running: boolean) => orchestrator.setRunning(running),
     setTradingMode: (mode: 'paper' | 'live') => orchestrator.getExecutionEngine().setMode(mode),
+    setStrategyMode: (mode: 'rules_only' | 'ai_veto' | 'dual_agent') => orchestrator.setStrategyMode(mode),
     closeAllPositions: async () => {
       const active = await orchestrator.getPositionTracker().getActivePositions();
       for (const pos of active) {
