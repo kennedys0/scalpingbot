@@ -1,7 +1,7 @@
 # 🤖 Multi-Chain AI Scalping Telegram Bot
 
 Bot scalping otomatis berbasis kecerdasan buatan (Dual AI Engine via OpenRouter / OpenAI-Compatible) untuk dua chain EVM independen:
-1. **Base (Chain ID: 8453)**: Eksekusi swap via Aerodrome & Uniswap V3.
+1. **Base (Chain ID: 8453)**: Eksekusi swap via Uniswap V2, Aerodrome, dan Uniswap V3 dengan proteksi anti-sandwich MEV Blocker.
 2. **Robinhood Chain (Chain ID: 4663)**: Arbitrum Orbit L2 dengan native ETH gas token, mendukung Uniswap V4 (PoolManager/Universal Router) & Uniswap V3.
 
 ---
@@ -15,17 +15,29 @@ Bot scalping otomatis berbasis kecerdasan buatan (Dual AI Engine via OpenRouter 
   - *Liquidity Depth vs FDV (Slippage Impact)*
   - *Karakteristik memecoin Base vs token RWA Robinhood*
 - **Pre-Computed Math**: Formula kuantitatif (Volume Delta, Buy Pressure Ratio, Volatilitas) dihitung otomatis oleh TypeScript sebelum prompt dikirim ke AI agar AI tidak salah hitung matematika.
-- **Safety Pre-Screener (Hemat Kuota AI & Anti-Rug)**: Memfilter token dengan likuiditas rendah (< $5,000), honeypot, dan buy/sell tax tinggi sebelum memanggil AI.
+- **Smart Auto-Blacklist & Whitelist**:
+  - Token yang **gagal pre-screening** (likuiditas buruk, tax tinggi, honeypot, anti-dump) atau **ditolak AI (AVOID)** langsung di-blacklist permanen sehingga tidak akan pernah di-scan atau dianalisis ulang, menghemat kuota AI dan waktu!
+  - Kelola manual via Telegram: `/blacklist <CA>` dan `/whitelist <CA>`.
+- **🪜 Partial Take-Profit Laddering (Scaling Out)**:
+  - Saat profit menyentuh **+15%**: Jual **50% alokasi** untuk mengunci profit awal.
+  - **Auto-Breakeven**: Stop loss otomatis dinaikkan ke **+1% (Breakeven)**.
+  - Sisa 50% posisi dibiarkan berjalan tanpa risiko rugi (*risk-free*) hingga target maksimal **+30%** atau terkena **Trailing Stop**.
+- **🛡️ Sistem Anti-Dump & MEV Protection**:
+  - *Flash Dump Guard*: Jika harga posisi terbuka anjlok mendadak ≥ 5% dalam 1 tick, bot seketika memicu `ANTI_DUMP` emergency exit.
+  - *MEV Protection*: Transaksi swap Base dialihkan melalui Private RPC (`https://base.mevblocker.io`) untuk mencegah *sandwich attack*.
 - **Sniper Engine**:
   - *Auto-Snipe*: Mendengarkan event on-chain pembentukan pair pool baru.
   - *Manual Instant Snipe*: Cukup kirimkan alamat Contract Address (CA) token ke chat Telegram untuk membeli instan.
 - **Risk Management & Circuit Breakers**:
-  - *Clamped Stop-Loss*: Batas maksimal kerugian per trade terkunci (default: max 7%).
+  - *Clamped Stop-Loss*: Batas maksimal kerugian per trade terkunci di max **10.0%**.
+  - *Max Take-Profit*: Target profit dikunci di max **30.0%**.
   - *Daily Drawdown Breaker*: Jika akumulasi kerugian 24 jam mencapai batas (default: `-0.1 ETH`), bot otomatis menghentikan pembelian baru.
 - **Hybrid Execution Engine**:
   - **Paper Trading (Default)**: Simulasi scalping dengan saldo virtual dan slippage realistis tanpa resiko modal riil.
   - **Live On-Chain Trading**: Eksekusi swap on-chain nyata menggunakan private key wallet EVM via Viem.
-- **Antarmuka Telegram Interaktif (GrammY)**: Kontrol panel dashboard lengkap dengan tombol inline, notifikasi sinyal scalping dengan ulasan alasan AI, dan tombol darurat *Panic Sell All*.
+- **Antarmuka Telegram Interaktif (GrammY)**:
+  - Dashboard lengkap dengan kontrol engine, toggle Paper/Live, active positions, dan tombol *Panic Sell All*.
+  - Command `/report` untuk melihat ringkasan harian performa, Win Rate (%), Total Net PnL, serta Best/Worst Trade.
 
 ---
 
@@ -38,15 +50,15 @@ scalping-bot/
 │   ├── core/
 │   │   ├── ai/             # Dual OpenRouter AI engine & crypto scalping knowledge base
 │   │   ├── scanner/        # DexScreener API scanner & kalkulator mikrostruktur
-│   │   ├── screener/       # Anti-honeypot, tax checker & liquidity filter
+│   │   ├── screener/       # Anti-honeypot, tax checker, anti-dump & Smart BlacklistManager
 │   │   ├── sniper/         # On-chain pool listener & instant CA swap pipeline
-│   │   ├── risk/           # Hard stop-loss & 24h daily drawdown circuit breaker
-│   │   ├── positions/      # Pelacak posisi aktif & real-time TP/SL ticker
-│   │   └── execution/      # Paper trader simulator & Viem live DEX router executor
+│   │   ├── risk/           # Hard stop-loss (10%), max TP (30%), daily drawdown circuit breaker
+│   │   ├── positions/      # Pelacak posisi, trailing stop, partial TP laddering & real-time ticker
+│   │   └── execution/      # Paper trader simulator & Viem DEX router (Base V2/V3/Aerodrome, RH V4/V3)
 │   ├── storage/            # Local atomic JSON storage (tanpa dependensi native C++)
-│   ├── bot/                # GrammY Telegram bot, inline menus & formatters
+│   ├── bot/                # GrammY Telegram bot, inline menus & formatters (/report, /blacklist)
 │   └── index.ts            # Main application bootstrap
-├── test/                   # Suite pengujian Vitest (10 file test, 25 skenario)
+├── test/                   # Suite pengujian Vitest (11 file test, 32 skenario)
 ├── .env.example            # Template environment variables
 ├── package.json
 └── tsconfig.json
@@ -71,7 +83,7 @@ Buka file `.env` dan masukkan:
 - `WALLET_PRIVATE_KEY`: *(Opsional)* Private key wallet EVM jika ingin Live Trading. Kosongkan jika ingin Paper Trading saja.
 
 ### 3. Jalankan Pengujian (Testing)
-Pastikan seluruh 25 unit & integration tests lulus:
+Pastikan seluruh 32 unit & integration tests lulus:
 ```bash
 npm test
 ```
@@ -90,12 +102,12 @@ npm start
 
 ---
 
-## 📱 Penggunaan di Telegram
+## 📱 Perintah di Telegram
 
-1. Buka chat bot di Telegram lalu ketik `/start` atau `/menu`.
-2. Anda akan melihat **Dashboard Utama**:
-   - `[🟢 Start Engine]` / `[🔴 Stop Engine]`: Mulai atau jeda pemindaian otomatis.
-   - `[📝 Switch to Paper]` / `[⚡ Switch to Live]`: Beralih antara simulasi dan trading nyata.
-   - `[📊 Active Positions]`: Melihat daftar posisi yang sedang berjalan beserta status profit.
-   - `[🚨 PANIC SELL ALL]`: Menjual seluruh posisi terbuka seketika di harga pasar.
-3. **Instant Snipe**: Cukup *paste* atau kirim alamat Contract Address token (misal: `0x532f27101965dd16442e59d40670faf5ebb142e4`) ke chat bot, bot akan menampilkan tombol cepat untuk mengeksekusi pembelian instan.
+- `/start` atau `/menu`: Buka kontrol panel dashboard utama.
+- `/report`: Tampilkan laporan performa trading harian, Win Rate, PnL bersih, trade terbaik dan terburuk.
+- `/blacklist <CA>`: Masukkan alamat token ke daftar hitam agar tidak di-scan oleh AI.
+- `/whitelist <CA>`: Hapus alamat token dari daftar hitam.
+- `/panic`: Jual seketika seluruh posisi terbuka di harga pasar (*Panic Sell All*).
+- `/help`: Panduan ringkas penggunaan bot.
+- **Instant Snipe**: Cukup kirim alamat token (CA) ke chat, bot akan menampilkan tombol cepat untuk mengeksekusi pembelian instan!

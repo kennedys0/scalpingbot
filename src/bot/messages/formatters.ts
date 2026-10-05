@@ -91,3 +91,34 @@ export function formatExitCard(data: ExitCardData): string {
 <b>Realized PnL:</b> ${isProfit ? '🟢' : '🔴'} <b>${sign}${data.pnlPct.toFixed(2)}% (${sign}${data.pnlEth.toFixed(4)} ETH)</b>
 ────────────────────────`;
 }
+
+export function generatePerformanceReport(trades: any[]): string {
+  const closedTrades = trades.filter((t) => t.status === 'CLOSED');
+  const total = closedTrades.length;
+  if (total === 0) {
+    return `📊 <b>DAILY PERFORMANCE REPORT</b>\n────────────────────────\nBelum ada trade yang ditutup hari ini.`;
+  }
+
+  const wins = closedTrades.filter((t) => (t.realizedPnlEth ?? 0) > 0);
+  const losses = closedTrades.filter((t) => (t.realizedPnlEth ?? 0) <= 0);
+  const winRate = ((wins.length / total) * 100).toFixed(1);
+  const totalNetPnlEth = closedTrades.reduce((acc, t) => acc + (t.realizedPnlEth ?? 0), 0);
+
+  // Sort to find best and worst
+  const sorted = [...closedTrades].sort((a, b) => (b.realizedPnlPct ?? 0) - (a.realizedPnlPct ?? 0));
+  const best = sorted[0];
+  const worst = sorted[sorted.length - 1];
+
+  const pnlSign = totalNetPnlEth >= 0 ? '+' : '';
+  const pnlEmoji = totalNetPnlEth >= 0 ? '🟢' : '🔴';
+
+  return `📊 <b>DAILY PERFORMANCE REPORT</b>
+────────────────────────
+<b>Total Trades:</b> <code>${total}</code> (${wins.length}W / ${losses.length}L)
+<b>Win Rate:</b> <code>${winRate}%</code>
+<b>Net PnL:</b> ${pnlEmoji} <code>${pnlSign}${totalNetPnlEth.toFixed(4)} ETH</code>
+
+🏆 <b>Best Trade:</b> $${best.tokenSymbol} (+${best.realizedPnlPct?.toFixed(1)}%)
+📉 <b>Worst Trade:</b> $${worst.tokenSymbol} (${worst.realizedPnlPct?.toFixed(1)}%)
+────────────────────────`;
+}

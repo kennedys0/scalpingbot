@@ -13,6 +13,8 @@ import { ViemClientManager } from './execution/viemClient.js';
 import { BaseRouterExecutor } from './execution/routers/baseRouter.js';
 import { RobinhoodRouterExecutor } from './execution/routers/rhRouter.js';
 
+import { BlacklistManager } from './screener/blacklist.js';
+
 export interface OrchestratorConfig {
   storage: JsonStorage;
   mode?: 'paper' | 'live';
@@ -29,6 +31,7 @@ export interface OrchestratorConfig {
   maxDailyLossEth?: number;
   onTradeSignal?: (signal: any) => Promise<void>;
   onTradeExit?: (exit: any) => Promise<void>;
+  onPartialTradeExit?: (exit: any) => Promise<void>;
 }
 
 export class ScalpingOrchestrator {
@@ -41,6 +44,7 @@ export class ScalpingOrchestrator {
   private screener: SafetyScreener;
   private circuitBreaker: CircuitBreaker;
   private sniper: InstantSniper;
+  private blacklist: BlacklistManager;
   private aiBase: AiScalpEngine;
   private aiRobinhood: AiScalpEngine;
 
@@ -50,13 +54,14 @@ export class ScalpingOrchestrator {
   private scanTimer: NodeJS.Timeout | null = null;
   private onTradeSignal?: (signal: any) => Promise<void>;
   private onTradeExit?: (exit: any) => Promise<void>;
+  private onPartialTradeExit?: (exit: any) => Promise<void>;
 
   constructor(config: OrchestratorConfig) {
     this.storage = config.storage;
     this.tracker = new PositionTracker(this.storage);
     this.paperTrader = new PaperTrader(config.initialVirtualEth ?? 1.0);
     this.circuitBreaker = new CircuitBreaker({
-      maxLossPerTradePct: config.maxLossPerTradePct ?? 7.0,
+      maxLossPerTradePct: config.maxLossPerTradePct ?? 10.0,
       maxDailyLossEth: config.maxDailyLossEth ?? 0.10,
     });
 
@@ -75,6 +80,7 @@ export class ScalpingOrchestrator {
     this.scanner = new DexScreenerScanner();
     this.screener = new SafetyScreener();
     this.sniper = new InstantSniper(this.engine);
+    this.blacklist = new BlacklistManager(this.storage);
 
     this.aiBase = new AiScalpEngine({
       apiKey: config.openRouterKeyBase || '',
@@ -94,11 +100,22 @@ export class ScalpingOrchestrator {
     this.defaultTradeSizeEth = config.defaultTradeSizeEth ?? 0.02;
     this.onTradeSignal = config.onTradeSignal;
     this.onTradeExit = config.onTradeExit;
+    this.onPartialTradeExit = config.onPartialTradeExit;
 
-    // Initialize real-time position ticker
-    this.ticker = new PositionTicker(this.tracker, async (position, reason, currentPrice) => {
-      await this.handleExitTrigger(position, reason, currentPrice);
-    });
+    // Initialize real-time position ticker with partial TP support
+    this.ticker = new PositionTicker(
+      this.tracker,
+      async (position, reason, currentPrice) => {
+        await this.handleExitTrigger(position, reason, currentPrice);
+      },
+      async (position, currentPrice, pctToSell) => {
+        await this.handlePartialTPTrigger(position, currentPrice, pctToSell);
+      }
+    );
+  }
+
+  public getBlacklistManager(): BlacklistManager {
+    return this.blacklist;
   }
 
   public getPositionTracker(): PositionTracker {
@@ -143,6 +160,11 @@ export class ScalpingOrchestrator {
     let tradesOpened = 0;
 
     for (const pair of pairs.slice(0, 5)) {
+      // 0. Auto-Blacklist Check: Skip tokens previously flagged as bad/rejected
+      if (this.blacklist.isBlacklisted(pair.baseToken.address)) {
+        continue;
+      }
+
       // 1. Calculate Quantitative Microstructure Metrics
       const metrics = calculateMicrostructureMetrics(pair);
 
@@ -158,7 +180,12 @@ export class ScalpingOrchestrator {
         sellVolumeRatio: (1 - metrics.buyPressureRatio5m),
       });
 
-      if (!screenResult.isSafe) continue;
+      if (!screenResult.isSafe) {
+        // Auto-blacklist bad tokens immediately so AI never re-evaluates them!
+        await this.blacklist.addToBlacklist(pair.baseToken.address, screenResult.reasons.join(', '));
+        continue;
+      }
+
       if (!metrics.isOrderFlowBullish) continue;
 
       // 3. AI Scalping Evaluation (OpenRouter)
@@ -170,6 +197,15 @@ export class ScalpingOrchestrator {
         priceUsd: metrics.priceUsd,
         metrics,
       });
+
+      if (decision.action === 'AVOID' || decision.confidence < this.minAiConfidence) {
+        // Auto-blacklist tokens deemed unviable by AI
+        await this.blacklist.addToBlacklist(
+          pair.baseToken.address,
+          `AI Rejected (${decision.confidence}%): ${decision.reasoning}`
+        );
+        continue;
+      }
 
       if (decision.action === 'BUY' && decision.confidence >= this.minAiConfidence) {
         // Enforce hard-stop & max take-profit clamp (TP max 30%, SL max 10%)
@@ -209,6 +245,25 @@ export class ScalpingOrchestrator {
     }
 
     return tradesOpened;
+  }
+
+  private async handlePartialTPTrigger(
+    position: Position,
+    currentPrice: number,
+    pctToSell: number
+  ): Promise<void> {
+    if (this.onPartialTradeExit) {
+      const pnlPct = ((currentPrice - position.entryPriceUsd) / position.entryPriceUsd) * 100;
+      await this.onPartialTradeExit({
+        chainId: position.chainId,
+        chainName: position.chainId === 8453 ? 'Base' : 'Robinhood',
+        tokenSymbol: position.tokenSymbol,
+        tokenAddress: position.tokenAddress,
+        pctSold: pctToSell,
+        currentPriceUsd: currentPrice,
+        pnlPct,
+      });
+    }
   }
 
   private async handleExitTrigger(position: Position, reason: ExitReason, currentPrice: number): Promise<void> {

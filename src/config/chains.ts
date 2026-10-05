@@ -10,6 +10,7 @@ export interface ChainDefinition {
   rpcUrls: {
     default: string;
     fallback: string;
+    mevProtected?: string;
   };
   blockExplorers: {
     default: {
@@ -39,6 +40,7 @@ export const CHAIN_CONFIG: Record<number, ChainDefinition> = {
     rpcUrls: {
       default: 'https://mainnet.base.org',
       fallback: 'https://base.llamarpc.com',
+      mevProtected: 'https://base.mevblocker.io', // Anti-sandwich private builder RPC
     },
     blockExplorers: {
       default: {

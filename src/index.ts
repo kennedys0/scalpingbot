@@ -43,6 +43,15 @@ async function bootstrap() {
         }
       }
     },
+
+    onPartialTradeExit: async (partial) => {
+      if (botInstance && env.TELEGRAM_ALLOWED_USER_IDS.length > 0) {
+        const text = `🪜 <b>[PARTIAL TAKE-PROFIT (+15%)]</b>\nToken: $${partial.tokenSymbol}\nSold: <b>50% of position</b>\nPrice: $${partial.currentPriceUsd.toFixed(6)}\n🛡️ <b>Stop Loss otomatis dinaikkan ke Breakeven (+1%)</b>!\nSisa 50% posisi dibiarkan berjalan risk-free.`;
+        for (const userId of env.TELEGRAM_ALLOWED_USER_IDS) {
+          await botInstance.api.sendMessage(userId, text, { parse_mode: 'HTML' }).catch(() => {});
+        }
+      }
+    },
   });
 
   // Setup Telegram Bot
@@ -60,6 +69,8 @@ async function bootstrap() {
         circuitBreakerTripped: orchestrator.getCircuitBreaker().isTripped(),
       };
     },
+    getTradesHistory: () => storage.getData().trades || [],
+    blacklistManager: orchestrator.getBlacklistManager(),
     setEngineRunning: (running: boolean) => orchestrator.setRunning(running),
     setTradingMode: (mode: 'paper' | 'live') => orchestrator.getExecutionEngine().setMode(mode),
     closeAllPositions: async () => {

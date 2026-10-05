@@ -12,6 +12,7 @@ export interface Position {
   stopLossPct: number;
   trailingStopPct?: number;
   highestPriceSeen?: number;
+  partialTakeProfitDone?: boolean;
   mode: 'paper' | 'live';
   status: 'OPEN' | 'CLOSED';
   openedAt: number;
@@ -79,6 +80,17 @@ export class PositionTracker {
       const pos = data.positions.find((p: Position) => p.id === id);
       if (pos && (!pos.highestPriceSeen || priceUsd > pos.highestPriceSeen)) {
         pos.highestPriceSeen = priceUsd;
+      }
+    });
+  }
+
+  public async markPartialTakeProfit(id: string, newStopLossPct: number = -1.0): Promise<void> {
+    this.storage.update((data) => {
+      const pos = data.positions.find((p: Position) => p.id === id);
+      if (pos) {
+        pos.partialTakeProfitDone = true;
+        pos.stopLossPct = newStopLossPct; // Set Stop Loss to +1% profit (Breakeven)
+        pos.amountTokens = pos.amountTokens / 2; // 50% sold, 50% remaining
       }
     });
   }

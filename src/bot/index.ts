@@ -8,11 +8,13 @@ export interface TelegramBotContext {
   token: string;
   allowedUserIds: number[];
   getDashboardData: () => any;
+  getTradesHistory: () => any[];
   setEngineRunning: (running: boolean) => void;
   setTradingMode: (mode: 'paper' | 'live') => void;
   closeAllPositions: () => Promise<number>;
   getActivePositions: () => Promise<any[]>;
   sniper: InstantSniper;
+  blacklistManager: any;
 }
 
 export function createTelegramBot(ctx: TelegramBotContext): Bot {
@@ -32,7 +34,7 @@ export function createTelegramBot(ctx: TelegramBotContext): Bot {
     await next();
   });
 
-  registerCommands(bot, ctx.getDashboardData);
+  registerCommands(bot, ctx);
   registerCallbacks(bot, ctx);
   registerSnipeInput(bot, ctx);
 

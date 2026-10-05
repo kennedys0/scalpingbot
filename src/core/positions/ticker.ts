@@ -3,17 +3,24 @@ import { PositionTracker, Position } from './tracker.js';
 export type ExitReason = 'TAKE_PROFIT' | 'STOP_LOSS' | 'TRAILING_STOP' | 'ANTI_DUMP' | 'PANIC_SELL';
 
 export type OnExitCallback = (position: Position, reason: ExitReason, currentPriceUsd: number) => Promise<void>;
+export type OnPartialTakeProfitCallback = (position: Position, currentPriceUsd: number, pctToSell: number) => Promise<void>;
 
 export class PositionTicker {
   private tracker: PositionTracker;
   private onExit: OnExitCallback;
+  private onPartialTakeProfit?: OnPartialTakeProfitCallback;
   private timer: NodeJS.Timeout | null = null;
   private isRunning: boolean = false;
   private lastPrices: Map<string, number> = new Map();
 
-  constructor(tracker: PositionTracker, onExit: OnExitCallback) {
+  constructor(
+    tracker: PositionTracker,
+    onExit: OnExitCallback,
+    onPartialTakeProfit?: OnPartialTakeProfitCallback
+  ) {
     this.tracker = tracker;
     this.onExit = onExit;
+    this.onPartialTakeProfit = onPartialTakeProfit;
   }
 
   public async checkPositionsWithPrices(priceMap: Record<string, number>): Promise<void> {
@@ -23,7 +30,8 @@ export class PositionTicker {
       const currentPrice = priceMap[pos.tokenAddress] || priceMap[pos.tokenAddress.toLowerCase()];
       if (currentPrice === undefined || currentPrice <= 0) continue;
 
-      const pnlPct = ((currentPrice - pos.entryPriceUsd) / pos.entryPriceUsd) * 100;
+      const rawPnl = ((currentPrice - pos.entryPriceUsd) / pos.entryPriceUsd) * 100;
+      const pnlPct = Math.round(rawPnl * 100) / 100;
       const lastPrice = this.lastPrices.get(pos.id);
       this.lastPrices.set(pos.id, currentPrice);
 
@@ -42,10 +50,20 @@ export class PositionTicker {
       const highestPrice = pos.highestPriceSeen || pos.entryPriceUsd;
       const dropFromHighestPct = ((highestPrice - currentPrice) / highestPrice) * 100;
 
-      // 1. Take Profit check (capped at takeProfitPct, e.g. max 30%)
+      // 1. Full Take Profit check (when price reaches or exceeds the position's target TP)
       if (pnlPct >= pos.takeProfitPct) {
         await this.onExit(pos, 'TAKE_PROFIT', currentPrice);
         this.lastPrices.delete(pos.id);
+        continue;
+      }
+
+      // 2. Partial Take Profit Laddering: At +15% profit (if full TP target > 15%), sell 50% and raise stop loss to +1% (Breakeven)
+      if (pos.takeProfitPct > 15.0 && pnlPct >= 15.0 && !pos.partialTakeProfitDone) {
+        if (this.onPartialTakeProfit) {
+          await this.onPartialTakeProfit(pos, currentPrice, 50);
+        }
+        await this.tracker.markPartialTakeProfit(pos.id, -1.0);
+        // Position remains OPEN with updated state
         continue;
       }
 
