@@ -4,6 +4,7 @@ export interface BlacklistEntry {
   address: string;
   reason: string;
   addedAt: number;
+  expiresAt?: number;
 }
 
 export class BlacklistManager {
@@ -24,17 +25,27 @@ export class BlacklistManager {
 
   public isBlacklisted(tokenAddress: string): boolean {
     const list = this.storage.getData().settings.blacklist || {};
-    return !!list[tokenAddress.toLowerCase()];
+    const entry = list[tokenAddress.toLowerCase()] as BlacklistEntry | undefined;
+    if (!entry) return false;
+
+    if (entry.expiresAt && Date.now() > entry.expiresAt) {
+      this.removeFromBlacklist(tokenAddress);
+      return false;
+    }
+
+    return true;
   }
 
-  public async addToBlacklist(tokenAddress: string, reason: string): Promise<void> {
+  public async addToBlacklist(tokenAddress: string, reason: string, ttlHours?: number): Promise<void> {
     const normalized = tokenAddress.toLowerCase();
+    const expiresAt = ttlHours ? Date.now() + ttlHours * 3600 * 1000 : undefined;
     this.storage.update((data) => {
       if (!data.settings.blacklist) data.settings.blacklist = {};
       data.settings.blacklist[normalized] = {
         address: normalized,
         reason,
         addedAt: Date.now(),
+        expiresAt,
       };
     });
   }

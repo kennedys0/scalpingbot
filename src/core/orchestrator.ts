@@ -18,6 +18,8 @@ import { DualAgentDebateEngine } from './ai/debate.js';
 import { SelfReflectiveMemory } from './ai/memory.js';
 import { MacroEthSentinel } from './scanner/macroRegime.js';
 import { SmartMoneyRadar } from './screener/smartMoney.js';
+import { OnChainHoneypotSimulator } from './screener/honeypotSimulator.js';
+import { reconcilePositionsOnChain, ReconciliationSummary } from './positions/reconciliation.js';
 
 export interface OrchestratorConfig {
   storage: JsonStorage;
@@ -33,6 +35,7 @@ export interface OrchestratorConfig {
   defaultTradeSizeEth?: number;
   maxLossPerTradePct?: number;
   maxDailyLossEth?: number;
+  enableOnChainSimulation?: boolean;
   onTradeSignal?: (signal: any) => Promise<void>;
   onTradeExit?: (exit: any) => Promise<void>;
   onPartialTradeExit?: (exit: any) => Promise<void>;
@@ -55,10 +58,14 @@ export class ScalpingOrchestrator {
   private memory: SelfReflectiveMemory;
   private macroSentinel: MacroEthSentinel;
   private smartMoneyRadar: SmartMoneyRadar;
+  private viemManager: ViemClientManager;
+  private honeypotSimBase: OnChainHoneypotSimulator;
+  private honeypotSimRH: OnChainHoneypotSimulator;
 
   private minAiConfidence: number;
   private defaultTradeSizeEth: number;
   private isEngineRunning: boolean = true;
+  private enableOnChainSimulation: boolean;
   private scanTimer: NodeJS.Timeout | null = null;
   private onTradeSignal?: (signal: any) => Promise<void>;
   private onTradeExit?: (exit: any) => Promise<void>;
@@ -73,9 +80,13 @@ export class ScalpingOrchestrator {
       maxDailyLossEth: config.maxDailyLossEth ?? 0.10,
     });
 
-    const viemManager = new ViemClientManager(config.walletPrivateKey);
-    const baseRouter = new BaseRouterExecutor(viemManager);
-    const rhRouter = new RobinhoodRouterExecutor(viemManager);
+    this.viemManager = new ViemClientManager(config.walletPrivateKey);
+    const baseRouter = new BaseRouterExecutor(this.viemManager);
+    const rhRouter = new RobinhoodRouterExecutor(this.viemManager);
+
+    this.honeypotSimBase = new OnChainHoneypotSimulator(this.viemManager.getPublicClient(8453));
+    this.honeypotSimRH = new OnChainHoneypotSimulator(this.viemManager.getPublicClient(4663));
+    this.enableOnChainSimulation = config.enableOnChainSimulation ?? false;
 
     this.engine = new ExecutionEngine({
       mode: config.mode ?? 'paper',
@@ -217,12 +228,25 @@ export class ScalpingOrchestrator {
       });
 
       if (!screenResult.isSafe) {
-        // Auto-blacklist bad tokens immediately so AI never re-evaluates them!
-        await this.blacklist.addToBlacklist(pair.baseToken.address, screenResult.reasons.join(', '));
+        // Auto-blacklist with 6-hour TTL for temporary screening failures (e.g. low initial liquidity)
+        await this.blacklist.addToBlacklist(pair.baseToken.address, screenResult.reasons.join(', '), 6);
         continue;
       }
 
       if (!metrics.isOrderFlowBullish) continue;
+
+      // 2.1 On-Chain Static Honeypot Simulation via eth_call
+      if (this.enableOnChainSimulation || this.engine.getMode() === 'live') {
+        const honeypotSim = chainId === 8453 ? this.honeypotSimBase : this.honeypotSimRH;
+        const simResult = await honeypotSim.simulateToken(pair.baseToken.address as `0x${string}`);
+        if (simResult.isHoneypot) {
+          await this.blacklist.addToBlacklist(
+            pair.baseToken.address,
+            `Honeypot static simulation failed: ${simResult.reason}`
+          );
+          continue;
+        }
+      }
 
       // 3. Prepare AI Candidate Context with Episodic Memory & Smart Money info
       const pastLessons = this.memory.formatLessonsForPrompt();
@@ -287,7 +311,7 @@ export class ScalpingOrchestrator {
       }
 
       if (decisionAction === 'AVOID' || confidence < this.minAiConfidence) {
-        // Auto-blacklist tokens deemed unviable by AI
+        // Auto-blacklist tokens deemed unviable by AI (permanent)
         await this.blacklist.addToBlacklist(
           pair.baseToken.address,
           `AI Rejected (${confidence}%): ${reasoning}`
@@ -300,11 +324,20 @@ export class ScalpingOrchestrator {
         const clampedTP = this.circuitBreaker.clampTakeProfit(takeProfitPct);
         const clampedSL = this.circuitBreaker.clampStopLoss(stopLossPct);
 
+        // Dynamic Position Sizing: Cap position size to max 1.5% of pool liquidity to eliminate self-price impact
+        const poolLiquidityUsd = pair.liquidity?.usd ?? 5000;
+        const maxSafeAllocEth = (poolLiquidityUsd * 0.015) / 2500;
+        const targetAllocEth = Math.min(
+          suggestedAllocEth || this.defaultTradeSizeEth,
+          this.defaultTradeSizeEth,
+          Math.max(maxSafeAllocEth, 0.005)
+        );
+
         const buyResult = await this.engine.executeBuy({
           chainId,
           tokenAddress: pair.baseToken.address,
           tokenSymbol: pair.baseToken.symbol,
-          amountEth: Math.min(suggestedAllocEth || this.defaultTradeSizeEth, this.defaultTradeSizeEth),
+          amountEth: targetAllocEth,
           currentPriceUsd: metrics.priceUsd,
           takeProfitPct: clampedTP,
           stopLossPct: clampedSL,
@@ -320,7 +353,7 @@ export class ScalpingOrchestrator {
               tokenSymbol: pair.baseToken.symbol,
               tokenAddress: pair.baseToken.address,
               entryPriceUsd: metrics.priceUsd,
-              amountEth: this.defaultTradeSizeEth,
+              amountEth: targetAllocEth,
               takeProfitPct: clampedTP,
               stopLossPct: clampedSL,
               confidence,
@@ -333,6 +366,10 @@ export class ScalpingOrchestrator {
     }
 
     return tradesOpened;
+  }
+
+  public async reconcileOnChain(): Promise<ReconciliationSummary> {
+    return await reconcilePositionsOnChain(this.tracker, this.viemManager);
   }
 
   private async handlePartialTPTrigger(

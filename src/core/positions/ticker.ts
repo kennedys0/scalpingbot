@@ -1,6 +1,12 @@
 import { PositionTracker, Position } from './tracker.js';
 
-export type ExitReason = 'TAKE_PROFIT' | 'STOP_LOSS' | 'TRAILING_STOP' | 'ANTI_DUMP' | 'PANIC_SELL';
+export type ExitReason =
+  | 'TAKE_PROFIT'
+  | 'STOP_LOSS'
+  | 'TRAILING_STOP'
+  | 'ANTI_DUMP'
+  | 'PANIC_SELL'
+  | 'TIME_EXPIRATION';
 
 export type OnExitCallback = (position: Position, reason: ExitReason, currentPriceUsd: number) => Promise<void>;
 export type OnPartialTakeProfitCallback = (position: Position, currentPriceUsd: number, pctToSell: number) => Promise<void>;
@@ -67,7 +73,7 @@ export class PositionTicker {
         continue;
       }
 
-      // 2. Trailing stop check (if in profit >= 8% and dropped >= trailingStopPct from peak)
+      // 3. Trailing stop check (if in profit >= 8% and dropped >= trailingStopPct from peak)
       const trailingThreshold = pos.trailingStopPct ?? 3.0;
       if (pnlPct >= 8.0 || (highestPrice > pos.entryPriceUsd * 1.08)) {
         if (dropFromHighestPct >= trailingThreshold) {
@@ -77,9 +83,17 @@ export class PositionTicker {
         }
       }
 
-      // 3. Stop Loss check (capped at stopLossPct, e.g. max 10%)
+      // 4. Stop Loss check (capped at stopLossPct, e.g. max 10%)
       if (pnlPct <= -pos.stopLossPct) {
         await this.onExit(pos, 'STOP_LOSS', currentPrice);
+        this.lastPrices.delete(pos.id);
+        continue;
+      }
+
+      // 5. Stale Trade Time-Based Exit: If open for >= 45 min and price is stagnant (-2% <= pnl <= +2%)
+      const openDurationMs = Date.now() - (pos.openedAt || Date.now());
+      if (openDurationMs >= 45 * 60 * 1000 && Math.abs(pnlPct) <= 2.0) {
+        await this.onExit(pos, 'TIME_EXPIRATION', currentPrice);
         this.lastPrices.delete(pos.id);
         continue;
       }

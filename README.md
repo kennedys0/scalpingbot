@@ -28,9 +28,18 @@ Bot scalping otomatis berbasis kecerdasan buatan (Dual AI Engine via OpenRouter 
   - Saat profit menyentuh **+15%**: Jual **50% alokasi** untuk mengunci profit awal.
   - **Auto-Breakeven**: Stop loss otomatis dinaikkan ke **+1% (Breakeven)**.
   - Sisa 50% posisi dibiarkan berjalan tanpa risiko rugi (*risk-free*) hingga target maksimal **+30%** atau terkena **Trailing Stop**.
-- **🛡️ Sistem Anti-Dump & MEV Protection**:
+- **🛡️ Sistem Anti-Dump, True Anti-Honeypot & MEV Protection**:
+  - *On-Chain Sell Simulation (`eth_call`)*: Bot melakukan simulasi static call `getAmountsOut` buy & sell sebelum mengeksekusi pembelian riil untuk mendeteksi honeypot terselubung (whitelist-only, transfer block, atau 100% hidden sell tax).
   - *Flash Dump Guard*: Jika harga posisi terbuka anjlok mendadak ≥ 5% dalam 1 tick, bot seketika memicu `ANTI_DUMP` emergency exit.
   - *MEV Protection*: Transaksi swap Base dialihkan melalui Private RPC (`https://base.mevblocker.io`) untuk mencegah *sandwich attack*.
+- **🌐 RPC Failover & Self-Healing Resilience**:
+  - *Fallback Transport*: Viem dikonfigurasi dengan multi-transport fallback dan automatic retry backoff saat RPC utama rate-limited.
+  - *On-Chain Position Reconciliation*: Saat bot startup atau restart, sistem mencocokkan posisi aktif dengan saldo token ERC-20 riil di wallet. Posisi yang sudah terjual manual di luar bot otomatis ditutup (*auto-reconciled*).
+- **⏱️ Dynamic Sizing, Stale Trade Exit & Streak Breaker**:
+  - *Dynamic Position Sizing*: Ukuran order dibatasi maksimal 1.5% dari total pool liquidity untuk mencegah *self-price-impact* pada pool tipis.
+  - *Stale Trade Time-Based Exit*: Posisi scalping yang berjalan ≥ 45 menit dengan pergerakan harga stagnan (-2% s/d +2%) otomatis ditutup (`TIME_EXPIRATION`) agar modal tidak tertahan.
+  - *Streak Circuit Breaker*: Cooldown 30 menit otomatis jika terjadi 3x Stop Loss berturut-turut.
+  - *Blacklist TTL*: Token yang gagal pre-screener karena likuiditas awal rendah diberikan masa tunggu 6 jam (TTL) alih-alih diblacklist permanen.
 - **Sniper Engine**:
   - *Auto-Snipe*: Mendengarkan event on-chain pembentukan pair pool baru.
   - *Manual Instant Snipe*: Cukup kirimkan alamat Contract Address (CA) token ke chat Telegram untuk membeli instan.
@@ -44,6 +53,14 @@ Bot scalping otomatis berbasis kecerdasan buatan (Dual AI Engine via OpenRouter 
 - **Antarmuka Telegram Interaktif (GrammY)**:
   - Dashboard lengkap dengan kontrol engine, toggle Paper/Live, active positions, dan tombol *Panic Sell All*.
   - Command `/report` untuk melihat ringkasan harian performa, Win Rate (%), Total Net PnL, serta Best/Worst Trade.
+
+---
+
+> [!CAUTION]
+> **PERINGATAN RISIKO & KEAMANAN DANA (SECURITY DISCLAIMER):**
+> 1. **Gunakan Hot Wallet Khusus**: JANGAN PERNAH menggunakan private key wallet utama yang menyimpan aset bernilai besar. Selalu gunakan dompet baru khusus bot dengan saldo ETH secukupnya.
+> 2. **Risiko Likuiditas Tipis**: Token baru di DEX memiliki volatilitas ekstrem. Walaupun bot dilengkapi proteksi honeypot on-chain dan anti-dump, slippage riil saat terjadi rugpull kilat di pool tipis bisa melebihi batas stop-loss teoritis.
+> 3. **Paper Trading Pertama**: Selalu jalankan mode `paper` terlebih dahulu untuk memvalidasi pola pergerakan pasar dan performa AI sebelum beralih ke mode `live`.
 
 ---
 
@@ -89,7 +106,7 @@ Buka file `.env` dan masukkan:
 - `WALLET_PRIVATE_KEY`: *(Opsional)* Private key wallet EVM jika ingin Live Trading. Kosongkan jika ingin Paper Trading saja.
 
 ### 3. Jalankan Pengujian (Testing)
-Pastikan seluruh 32 unit & integration tests lulus:
+Pastikan seluruh 43 unit & integration tests lulus:
 ```bash
 npm test
 ```

@@ -1,4 +1,4 @@
-import { createPublicClient, createWalletClient, http, defineChain, PublicClient, WalletClient } from 'viem';
+import { createPublicClient, createWalletClient, http, fallback, defineChain, PublicClient, WalletClient } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { base } from 'viem/chains';
 import { getChainConfig } from '../../config/chains.js';
@@ -43,9 +43,15 @@ export class ViemClientManager {
     const config = getChainConfig(chainId);
     const chain = chainId === 8453 ? base : robinhoodChain;
 
+    const transports = [http(config.rpcUrls.default, { timeout: 10000 })];
+    if (config.rpcUrls.fallback) {
+      transports.push(http(config.rpcUrls.fallback, { timeout: 10000 }));
+    }
+    const transport = fallback(transports, { retryCount: 3, retryDelay: 1000 });
+
     const client = createPublicClient({
       chain,
-      transport: http(config.rpcUrls.default, { timeout: 10000 }),
+      transport,
     }) as PublicClient;
 
     this.publicClients.set(chainId, client);
@@ -62,10 +68,16 @@ export class ViemClientManager {
     const chain = chainId === 8453 ? base : robinhoodChain;
     const account = privateKeyToAccount(this.privateKey);
 
+    const transports = [http(config.rpcUrls.default, { timeout: 10000 })];
+    if (config.rpcUrls.fallback) {
+      transports.push(http(config.rpcUrls.fallback, { timeout: 10000 }));
+    }
+    const transport = fallback(transports, { retryCount: 3, retryDelay: 1000 });
+
     const client = createWalletClient({
       account,
       chain,
-      transport: http(config.rpcUrls.default, { timeout: 10000 }),
+      transport,
     });
 
     this.walletClients.set(chainId, client);

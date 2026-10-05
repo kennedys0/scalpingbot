@@ -54,6 +54,12 @@ async function bootstrap() {
     },
   });
 
+  // Reconcile open positions against on-chain wallet balance upon startup
+  const reconcileReport = await orchestrator.reconcileOnChain();
+  if (reconcileReport.closedCount > 0) {
+    console.log(`🔄 Reconciled on-chain positions: Closed ${reconcileReport.closedCount} external/zero-balance positions.`);
+  }
+
   // Setup Telegram Bot
   botInstance = createTelegramBot({
     token: env.TELEGRAM_BOT_TOKEN,

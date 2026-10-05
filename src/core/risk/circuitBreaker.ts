@@ -2,6 +2,8 @@ export interface CircuitBreakerConfig {
   maxTakeProfitPct?: number;
   maxLossPerTradePct: number;
   maxDailyLossEth: number;
+  maxConsecutiveLosses?: number;
+  streakCooldownMinutes?: number;
 }
 
 export interface TradePnLEntry {
@@ -13,6 +15,10 @@ export class CircuitBreaker {
   private maxTakeProfitPct: number;
   private maxLossPerTradePct: number;
   private maxDailyLossEth: number;
+  private maxConsecutiveLosses: number;
+  private streakCooldownMinutes: number;
+  private consecutiveLosses: number = 0;
+  private streakCooldownUntil: number = 0;
   private recentTrades: TradePnLEntry[] = [];
   private manuallyTripped: boolean = false;
 
@@ -20,6 +26,8 @@ export class CircuitBreaker {
     this.maxTakeProfitPct = config.maxTakeProfitPct ?? 30.0;
     this.maxLossPerTradePct = config.maxLossPerTradePct;
     this.maxDailyLossEth = config.maxDailyLossEth;
+    this.maxConsecutiveLosses = config.maxConsecutiveLosses ?? 3;
+    this.streakCooldownMinutes = config.streakCooldownMinutes ?? 30;
   }
 
   public clampTakeProfit(proposedTakeProfitPct: number): number {
@@ -36,6 +44,15 @@ export class CircuitBreaker {
       pnlEth,
     });
     this.cleanupOldTrades();
+
+    if (pnlEth < 0) {
+      this.consecutiveLosses++;
+      if (this.consecutiveLosses >= this.maxConsecutiveLosses) {
+        this.streakCooldownUntil = Date.now() + this.streakCooldownMinutes * 60 * 1000;
+      }
+    } else if (pnlEth > 0) {
+      this.consecutiveLosses = 0;
+    }
   }
 
   private cleanupOldTrades(): void {
@@ -59,13 +76,30 @@ export class CircuitBreaker {
     return this.recentTrades.reduce((acc, t) => acc + t.pnlEth, 0);
   }
 
+  public getConsecutiveLossCount(): number {
+    return this.consecutiveLosses;
+  }
+
   public isTripped(): boolean {
     if (this.manuallyTripped) return true;
+    if (Date.now() < this.streakCooldownUntil) return true;
     return this.getDailyLossEth() >= this.maxDailyLossEth;
   }
 
   public canOpenTrade(): { allowed: boolean; reason?: string } {
-    if (this.isTripped()) {
+    if (this.manuallyTripped) {
+      return { allowed: false, reason: 'Circuit breaker tripped manually by operator.' };
+    }
+
+    if (Date.now() < this.streakCooldownUntil) {
+      const remainingMin = Math.ceil((this.streakCooldownUntil - Date.now()) / (60 * 1000));
+      return {
+        allowed: false,
+        reason: `Consecutive loss streak breaker active: ${this.consecutiveLosses} consecutive stop-losses incurred. Cooling down for ${remainingMin}m.`,
+      };
+    }
+
+    if (this.getDailyLossEth() >= this.maxDailyLossEth) {
       return {
         allowed: false,
         reason: `Circuit breaker tripped: 24h loss (${this.getDailyLossEth().toFixed(4)} ETH) hit or exceeded threshold (${this.maxDailyLossEth} ETH).`,
@@ -80,6 +114,8 @@ export class CircuitBreaker {
 
   public reset(): void {
     this.manuallyTripped = false;
+    this.consecutiveLosses = 0;
+    this.streakCooldownUntil = 0;
     this.recentTrades = [];
   }
 }

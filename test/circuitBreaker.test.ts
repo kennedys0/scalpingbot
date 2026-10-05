@@ -49,4 +49,23 @@ describe('Risk Management & Circuit Breakers', () => {
     expect(circuitBreaker.isTripped()).toBe(false);
     expect(circuitBreaker.canOpenTrade().allowed).toBe(true);
   });
+
+  it('trips circuit breaker on consecutive loss streak (e.g. 3 consecutive losses)', () => {
+    circuitBreaker.recordClosedTrade(-0.01);
+    circuitBreaker.recordClosedTrade(-0.01);
+    expect(circuitBreaker.getConsecutiveLossCount()).toBe(2);
+    expect(circuitBreaker.canOpenTrade().allowed).toBe(true);
+
+    // 3rd consecutive loss
+    circuitBreaker.recordClosedTrade(-0.01);
+    expect(circuitBreaker.getConsecutiveLossCount()).toBe(3);
+    expect(circuitBreaker.isTripped()).toBe(true);
+    expect(circuitBreaker.canOpenTrade().allowed).toBe(false);
+    expect(circuitBreaker.canOpenTrade().reason).toContain('Consecutive loss streak');
+
+    // Win resets streak
+    circuitBreaker.reset();
+    circuitBreaker.recordClosedTrade(0.02);
+    expect(circuitBreaker.getConsecutiveLossCount()).toBe(0);
+  });
 });
