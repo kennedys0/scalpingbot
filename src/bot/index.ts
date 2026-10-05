@@ -1,0 +1,40 @@
+import { Bot } from 'grammy';
+import { registerCommands } from './handlers/commands.js';
+import { registerCallbacks } from './handlers/callbacks.js';
+import { registerSnipeInput } from './handlers/snipeInput.js';
+import { InstantSniper } from '../core/sniper/instantSnipe.js';
+
+export interface TelegramBotContext {
+  token: string;
+  allowedUserIds: number[];
+  getDashboardData: () => any;
+  setEngineRunning: (running: boolean) => void;
+  setTradingMode: (mode: 'paper' | 'live') => void;
+  closeAllPositions: () => Promise<number>;
+  getActivePositions: () => Promise<any[]>;
+  sniper: InstantSniper;
+}
+
+export function createTelegramBot(ctx: TelegramBotContext): Bot {
+  const bot = new Bot(ctx.token);
+
+  // Security authorization middleware: Only allow whitelisted users
+  bot.use(async (telegramCtx, next) => {
+    if (ctx.allowedUserIds.length > 0) {
+      const fromId = telegramCtx.from?.id;
+      if (!fromId || !ctx.allowedUserIds.includes(fromId)) {
+        await telegramCtx.reply('⛔ <b>Access Denied</b>: You are not authorized to use this scalping bot.', {
+          parse_mode: 'HTML',
+        });
+        return;
+      }
+    }
+    await next();
+  });
+
+  registerCommands(bot, ctx.getDashboardData);
+  registerCallbacks(bot, ctx);
+  registerSnipeInput(bot, ctx);
+
+  return bot;
+}
