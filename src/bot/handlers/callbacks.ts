@@ -1,5 +1,5 @@
-import { Bot, Context } from 'grammy';
-import { formatDashboard } from '../messages/formatters.js';
+import { Bot, Context, InlineKeyboard } from 'grammy';
+import { formatDashboard, formatLiveFeedSummary } from '../messages/formatters.js';
 import { buildMainMenuKeyboard } from '../keyboards/menus.js';
 
 export function registerCallbacks(
@@ -11,6 +11,7 @@ export function registerCallbacks(
     setStrategyMode?: (mode: 'rules_only' | 'ai_veto' | 'dual_agent') => void;
     closeAllPositions: () => Promise<number>;
     getActivePositions: () => Promise<any[]>;
+    getRecentActivities?: () => any[];
   }
 ): void {
   bot.callbackQuery('refresh_status', async (ctx: Context) => {
@@ -114,6 +115,16 @@ export function registerCallbacks(
       summary += `• <b>$${p.tokenSymbol}</b> (${chainName})\n  Entry: $${p.entryPriceUsd} | Cost: ${p.costEth} ETH\n  TP: +${p.takeProfitPct}% | SL: -${p.stopLossPct}%\n\n`;
     }
     await ctx.reply(summary, { parse_mode: 'HTML' });
+    await ctx.answerCallbackQuery();
+  });
+
+  bot.callbackQuery('view_feed', async (ctx: Context) => {
+    const activities = context.getRecentActivities ? context.getRecentActivities() : [];
+    const text = formatLiveFeedSummary(activities);
+    const keyboard = new InlineKeyboard()
+      .text('🔄 Refresh Feed', 'view_feed')
+      .text('🔙 Back to Menu', 'refresh_status');
+    await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard }).catch(() => {});
     await ctx.answerCallbackQuery();
   });
 

@@ -2,7 +2,7 @@ import { getEnv } from './config/env.js';
 import { JsonStorage } from './storage/db.js';
 import { ScalpingOrchestrator } from './core/orchestrator.js';
 import { createTelegramBot } from './bot/index.js';
-import { formatTradeSignalCard, formatExitCard } from './bot/messages/formatters.js';
+import { formatTradeSignalCard, formatExitCard, formatAiDebateCard, formatRiskEvaluationCard } from './bot/messages/formatters.js';
 
 async function bootstrap() {
   console.log('🚀 Starting Multi-Chain AI Scalping Bot...');
@@ -52,6 +52,27 @@ async function bootstrap() {
         }
       }
     },
+
+    onAiDebate: async (debate) => {
+      if (botInstance && env.TELEGRAM_ALLOWED_USER_IDS.length > 0) {
+        const text = formatAiDebateCard(debate);
+        for (const userId of env.TELEGRAM_ALLOWED_USER_IDS) {
+          await botInstance.api.sendMessage(userId, text, { parse_mode: 'HTML' }).catch(() => {});
+        }
+      }
+    },
+
+    onRiskEvaluation: async (risk) => {
+      if (botInstance && env.TELEGRAM_ALLOWED_USER_IDS.length > 0) {
+        // Broadcast when EV calculation is completed or when security score check fails
+        if (!risk.passed || risk.stage === 'EV_CALCULATOR') {
+          const text = formatRiskEvaluationCard(risk);
+          for (const userId of env.TELEGRAM_ALLOWED_USER_IDS) {
+            await botInstance.api.sendMessage(userId, text, { parse_mode: 'HTML' }).catch(() => {});
+          }
+        }
+      }
+    },
   });
 
   // Reconcile open positions against on-chain wallet balance upon startup
@@ -90,6 +111,7 @@ async function bootstrap() {
     },
     getActivePositions: () => orchestrator.getPositionTracker().getActivePositions(),
     sniper: orchestrator.getSniper(),
+    getRecentActivities: () => orchestrator.getRecentActivities(),
   });
 
   // Start background scanner

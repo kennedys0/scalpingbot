@@ -154,3 +154,113 @@ export function generatePerformanceReport(trades: any[]): string {
 📉 <b>Worst Trade:</b> $${escapeHtml(worst.tokenSymbol)} (${worst.realizedPnlPct?.toFixed(1)}%)
 ────────────────────────`;
 }
+
+export interface AiDebateCardData {
+  chainName: string;
+  tokenSymbol: string;
+  tokenAddress: string;
+  hunterDecision: {
+    action: string;
+    confidence: number;
+    takeProfitPct?: number;
+    stopLossPct?: number;
+    reasoning?: string;
+    signalsDetected?: string[];
+  };
+  auditorDecision: {
+    action: string;
+    confidence: number;
+    takeProfitPct?: number;
+    stopLossPct?: number;
+    reasoning?: string;
+  };
+  consensus: {
+    action: string;
+    consensusScore: number;
+    takeProfitPct: number;
+    stopLossPct: number;
+  };
+}
+
+export function formatAiDebateCard(data: AiDebateCardData): string {
+  const isAgreed = data.consensus.action === 'BUY';
+  const statusEmoji = isAgreed ? '🟢' : data.consensus.action === 'AVOID' ? '🔴' : '🟡';
+  const consensusText = isAgreed ? 'CONSENSUS BUY' : data.consensus.action === 'AVOID' ? 'REJECTED / AVOID' : 'WAIT / CAUTION';
+
+  const hunterEmoji = data.hunterDecision.action === 'BUY' ? '🟢' : '🔴';
+  const auditorEmoji = data.auditorDecision.action === 'BUY' ? '🟢' : '🔴';
+
+  return `⚔️ <b>[DUAL AI DEBATE FEED]</b>
+────────────────────────
+<b>Token:</b> $${escapeHtml(data.tokenSymbol)} (<code>${data.tokenAddress.substring(0, 8)}...${data.tokenAddress.substring(data.tokenAddress.length - 6)}</code>)
+<b>Network:</b> ${escapeHtml(data.chainName)}
+
+🏹 <b>Hunter Agent (Bull Momentum):</b>
+• Stance: ${hunterEmoji} <b>${data.hunterDecision.action}</b> (Confidence: <b>${data.hunterDecision.confidence}%</b>)
+• Target: TP <code>+${data.hunterDecision.takeProfitPct ?? 20}%</code> | SL <code>-${data.hunterDecision.stopLossPct ?? 6}%</code>
+• Reasoning: <i>"${escapeHtml(data.hunterDecision.reasoning || 'No details')}"</i>
+
+🛡️ <b>Auditor Agent (Bear Risk):</b>
+• Stance: ${auditorEmoji} <b>${data.auditorDecision.action}</b> (Confidence: <b>${data.auditorDecision.confidence}%</b>)
+• Target: TP <code>+${data.auditorDecision.takeProfitPct ?? 20}%</code> | SL <code>-${data.auditorDecision.stopLossPct ?? 6}%</code>
+• Audit Note: <i>"${escapeHtml(data.auditorDecision.reasoning || 'No details')}"</i>
+
+⚖️ <b>Debate Consensus Verdict:</b>
+• Outcome: ${statusEmoji} <b>${consensusText}</b> (Consensus Score: <b>${data.consensus.consensusScore}%</b>)
+${isAgreed ? `• Agreed Setup: TP <code>+${data.consensus.takeProfitPct}%</code> | SL <code>-${data.consensus.stopLossPct}%</code>\n• Status: <i>Maju ke evaluasi Risk Engine Expected Value (EV)...</i>` : `• Status: <i>Dibatalkan. Token masuk temporary blacklist cooldown.</i>`}
+────────────────────────`;
+}
+
+export interface RiskEvaluationCardData {
+  chainName: string;
+  tokenSymbol: string;
+  stage: 'SECURITY_SCORE' | 'EV_CALCULATOR';
+  passed: boolean;
+  score?: number;
+  expectedValuePct?: number;
+  winProbPct?: number;
+  frictionPct?: number;
+  reason?: string;
+}
+
+export function formatRiskEvaluationCard(data: RiskEvaluationCardData): string {
+  if (data.stage === 'SECURITY_SCORE') {
+    const statusEmoji = data.passed ? '✅' : '⛔';
+    return `🛡️ <b>[TOKEN SECURITY EVALUATION]</b>
+────────────────────────
+<b>Token:</b> $${escapeHtml(data.tokenSymbol)} | <b>Network:</b> ${escapeHtml(data.chainName)}
+<b>Security Score:</b> <b>${data.score}/100</b> ${statusEmoji} (Min: 80)
+<b>Verdict:</b> ${data.passed ? '🟢 <b>PASSED MULTI-FACTOR CHECK</b>' : '🔴 <b>REJECTED BY SECURITY FILTER</b>'}
+${data.reason ? `• Catatan: <i>${escapeHtml(data.reason)}</i>\n` : ''}────────────────────────`;
+  }
+
+  const evEmoji = data.passed ? '🚀' : '⛔';
+  return `📊 <b>[RISK ENGINE EV GATEKEEPER]</b>
+────────────────────────
+<b>Token:</b> $${escapeHtml(data.tokenSymbol)} | <b>Network:</b> ${escapeHtml(data.chainName)}
+• Win Probability: <b>${data.winProbPct}%</b> (Terkalibrasi)
+• Round-Trip Friction: <b>${data.frictionPct?.toFixed(1)}%</b> (Gas + Slippage)
+• Net Expected Value: <b>${data.expectedValuePct && data.expectedValuePct >= 0 ? '+' : ''}${data.expectedValuePct?.toFixed(2)}%</b> (Min: +1.5%)
+<b>Verdict:</b> ${evEmoji} <b>${data.passed ? 'APPROVED FOR EXECUTION' : 'VETOED (INSUFFICIENT EDGE)'}</b>
+${data.reason ? `• Reason: <i>${escapeHtml(data.reason)}</i>\n` : ''}────────────────────────`;
+}
+
+export function formatLiveFeedSummary(activities: any[]): string {
+  if (!activities || activities.length === 0) {
+    return `📡 <b>LIVE AI ACTIVITY FEED</b>\n────────────────────────\nBelum ada riwayat aktivitas terbaru. Scanner sedang aktif memantau jaringan.`;
+  }
+
+  const items = activities.slice(-7).reverse().map((a) => {
+    const date = new Date(a.timestamp);
+    const time = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}:${date.getSeconds().toString().padStart(2, '0')}`;
+    const levelEmoji = a.level === 'SUCCESS' ? '🟢' : a.level === 'WARN' ? '⚠️' : a.level === 'ALERT' ? '🚨' : 'ℹ️';
+    const tag = `[${a.stage}]`;
+    return `<code>${time}</code> ${levelEmoji} <b>${tag}</b> ${escapeHtml(a.message)}`;
+  }).join('\n\n');
+
+  return `📡 <b>LIVE AI & SCANNER ACTIVITY FEED</b>
+────────────────────────
+${items}
+────────────────────────
+<i>Gunakan /menu untuk kembali ke dashboard utama.</i>`;
+}

@@ -30,8 +30,12 @@ export class ViemClientManager {
   private privateKey?: `0x${string}`;
 
   constructor(privateKeyHex?: string) {
-    if (privateKeyHex && privateKeyHex.startsWith('0x') && privateKeyHex.length === 66) {
-      this.privateKey = privateKeyHex as `0x${string}`;
+    if (privateKeyHex && privateKeyHex.trim()) {
+      const clean = privateKeyHex.trim();
+      const formatted = clean.startsWith('0x') ? clean : `0x${clean}`;
+      if (formatted.length === 66) {
+        this.privateKey = formatted as `0x${string}`;
+      }
     }
   }
 

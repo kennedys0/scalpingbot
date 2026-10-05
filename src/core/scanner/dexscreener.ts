@@ -25,13 +25,12 @@ export class DexScreenerScanner {
     const chainConfig = getChainConfig(chainId);
     const dexscreenerChain = chainConfig.dexscreenerChainId;
 
-    // Fetch token boost/trending profiles or search pairs for chain
-    const pairs = await this.fetchFromDexScreener(`/latest/dex/tokens/trending/${dexscreenerChain}`)
-      .then((res) => (res.length > 0 ? res : this.fetchFromDexScreener(`/latest/dex/search?q=${dexscreenerChain}`)));
+    // Search trending pairs for chain
+    const pairs = await this.fetchFromDexScreener(`/latest/dex/search?q=${dexscreenerChain}`);
 
     // Normalize and filter for this chain
     return pairs
-      .filter((p: any) => p && (p.chainId === dexscreenerChain || !p.chainId))
+      .filter((p: any) => p && p.baseToken?.address && (p.chainId === dexscreenerChain || !p.chainId))
       .map((p: any): DexPairData => ({
         pairAddress: p.pairAddress,
         baseToken: {

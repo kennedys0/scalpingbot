@@ -16,6 +16,7 @@ export interface TelegramBotContext {
   getActivePositions: () => Promise<any[]>;
   sniper: InstantSniper;
   blacklistManager: any;
+  getRecentActivities?: () => any[];
 }
 
 export function createTelegramBot(ctx: TelegramBotContext): Bot {

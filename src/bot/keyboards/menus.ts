@@ -30,9 +30,11 @@ export function buildMainMenuKeyboard(
     .text(strategyMode === 'dual_agent' ? '✅ ⚔️ Dual AI' : '⚔️ Dual AI', 'strat_dual_agent')
     .row()
     .text('📊 Active Positions', 'view_positions')
-    .text('📜 Trade History', 'view_history')
+    .text('📡 Live AI Feed', 'view_feed')
     .row()
+    .text('📜 Trade History', 'view_history')
     .text('⚙️ Settings & Limits', 'view_settings')
+    .row()
     .text('🚨 PANIC SELL ALL', 'panic_sell_all')
     .row()
     .text('🔄 Refresh Status', 'refresh_status');

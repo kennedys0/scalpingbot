@@ -11,6 +11,8 @@ export interface ConsensusDecision {
   hunterReasoning: string;
   auditorReasoning: string;
   signalsDetected: string[];
+  hunterVerdict?: AiScalpDecision;
+  auditorVerdict?: AiScalpDecision;
 }
 
 export class DualAgentDebateEngine {
@@ -49,6 +51,8 @@ export class DualAgentDebateEngine {
         hunterReasoning: hunterVerdict.reasoning,
         auditorReasoning: auditorVerdict.reasoning,
         signalsDetected: safeSignals,
+        hunterVerdict,
+        auditorVerdict,
       };
     }
 
@@ -72,6 +76,8 @@ export class DualAgentDebateEngine {
         hunterReasoning: hunterVerdict.reasoning,
         auditorReasoning: auditorVerdict.reasoning,
         signalsDetected: safeSignals,
+        hunterVerdict,
+        auditorVerdict,
       };
     }
 
@@ -84,6 +90,8 @@ export class DualAgentDebateEngine {
       hunterReasoning: hunterVerdict.reasoning,
       auditorReasoning: auditorVerdict.reasoning,
       signalsDetected: safeSignals,
+      hunterVerdict,
+      auditorVerdict,
     };
   }
 }

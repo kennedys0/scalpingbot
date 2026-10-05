@@ -1,5 +1,5 @@
-import { Bot, Context } from 'grammy';
-import { formatDashboard, generatePerformanceReport } from '../messages/formatters.js';
+import { Bot, Context, InlineKeyboard } from 'grammy';
+import { formatDashboard, generatePerformanceReport, formatLiveFeedSummary } from '../messages/formatters.js';
 import { buildMainMenuKeyboard } from '../keyboards/menus.js';
 
 export function registerCommands(
@@ -9,6 +9,7 @@ export function registerCommands(
     getTradesHistory: () => any[];
     blacklistManager: any;
     closeAllPositions?: () => Promise<number>;
+    getRecentActivities?: () => any[];
   }
 ): void {
   bot.command(['start', 'menu'], async (ctx: Context) => {
@@ -68,6 +69,15 @@ export function registerCommands(
     });
   });
 
+  bot.command(['feed', 'live'], async (ctx: Context) => {
+    const activities = context.getRecentActivities ? context.getRecentActivities() : [];
+    const text = formatLiveFeedSummary(activities);
+    const keyboard = new InlineKeyboard()
+      .text('🔄 Refresh Feed', 'view_feed')
+      .text('🔙 Back to Menu', 'refresh_status');
+    await ctx.reply(text, { parse_mode: 'HTML', reply_markup: keyboard });
+  });
+
   bot.command('help', async (ctx: Context) => {
     const helpText = `📖 <b>AI Scalping Bot Guide</b>
 ────────────────────────
@@ -80,6 +90,7 @@ export function registerCommands(
 
 <b>Perintah Cepat:</b>
 /menu - Tampilkan kontrol panel utama
+/feed - Tampilkan aktivitas real-time scanner & debat AI terbaru
 /report - Tampilkan ringkasan performa trading harian & win rate
 /blacklist &lt;CA&gt; - Masukkan token ke daftar hitam
 /whitelist &lt;CA&gt; - Hapus token dari daftar hitam

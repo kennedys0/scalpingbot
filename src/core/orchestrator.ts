@@ -24,6 +24,36 @@ import { reconcilePositionsOnChain, ReconciliationSummary } from './positions/re
 import { ExpectedValueCalculator } from './risk/evCalculator.js';
 import { TokenSecurityScorer } from './screener/securityScore.js';
 
+export interface AiDebateInfo {
+  chainName: string;
+  tokenSymbol: string;
+  tokenAddress: string;
+  hunterDecision: any;
+  auditorDecision: any;
+  consensus: any;
+}
+
+export interface RiskEvaluationInfo {
+  chainName: string;
+  tokenSymbol: string;
+  tokenAddress: string;
+  stage: 'SECURITY_SCORE' | 'EV_CALCULATOR';
+  passed: boolean;
+  score?: number;
+  expectedValuePct?: number;
+  winProbPct?: number;
+  frictionPct?: number;
+  reason?: string;
+}
+
+export interface ActivityLogEntry {
+  timestamp: number;
+  stage: 'SCANNER' | 'PRE_SCREEN' | 'SECURITY' | 'DEBATE' | 'RISK_ENGINE' | 'ORDER';
+  message: string;
+  tokenSymbol?: string;
+  level: 'INFO' | 'SUCCESS' | 'WARN' | 'ALERT';
+}
+
 export interface OrchestratorConfig {
   storage: JsonStorage;
   mode?: 'paper' | 'live' | 'shadow';
@@ -45,6 +75,9 @@ export interface OrchestratorConfig {
   onTradeSignal?: (signal: any) => Promise<void>;
   onTradeExit?: (exit: any) => Promise<void>;
   onPartialTradeExit?: (exit: any) => Promise<void>;
+  onAiActivity?: (activity: ActivityLogEntry) => Promise<void>;
+  onAiDebate?: (debate: AiDebateInfo) => Promise<void>;
+  onRiskEvaluation?: (risk: RiskEvaluationInfo) => Promise<void>;
 }
 
 export class ScalpingOrchestrator {
@@ -76,9 +109,13 @@ export class ScalpingOrchestrator {
   private isEngineRunning: boolean = true;
   private enableOnChainSimulation: boolean;
   private scanTimer: NodeJS.Timeout | null = null;
+  private recentActivities: ActivityLogEntry[] = [];
   private onTradeSignal?: (signal: any) => Promise<void>;
   private onTradeExit?: (exit: any) => Promise<void>;
   private onPartialTradeExit?: (exit: any) => Promise<void>;
+  private onAiActivity?: (activity: ActivityLogEntry) => Promise<void>;
+  private onAiDebate?: (debate: AiDebateInfo) => Promise<void>;
+  private onRiskEvaluation?: (risk: RiskEvaluationInfo) => Promise<void>;
 
   constructor(config: OrchestratorConfig) {
     this.storage = config.storage;
@@ -142,6 +179,9 @@ export class ScalpingOrchestrator {
     this.onTradeSignal = config.onTradeSignal;
     this.onTradeExit = config.onTradeExit;
     this.onPartialTradeExit = config.onPartialTradeExit;
+    this.onAiActivity = config.onAiActivity;
+    this.onAiDebate = config.onAiDebate;
+    this.onRiskEvaluation = config.onRiskEvaluation;
 
     // Initialize real-time position ticker with partial TP support
     this.ticker = new PositionTicker(
@@ -153,6 +193,22 @@ export class ScalpingOrchestrator {
         await this.handlePartialTPTrigger(position, currentPrice, pctToSell);
       }
     );
+  }
+
+  public getRecentActivities(): ActivityLogEntry[] {
+    return [...this.recentActivities];
+  }
+
+  public logActivity(entry: Omit<ActivityLogEntry, 'timestamp'>): void {
+    const fullEntry: ActivityLogEntry = { ...entry, timestamp: Date.now() };
+    this.recentActivities.push(fullEntry);
+    if (this.recentActivities.length > 30) {
+      this.recentActivities.shift();
+    }
+    console.log(`[${entry.stage}] ${entry.message}`);
+    if (this.onAiActivity) {
+      this.onAiActivity(fullEntry).catch(() => {});
+    }
   }
 
   public getBlacklistManager(): BlacklistManager {
@@ -225,20 +281,35 @@ export class ScalpingOrchestrator {
 
   public async runScanCycle(chainId: number): Promise<number> {
     if (!this.isEngineRunning) return 0;
+    const chainName = chainId === 8453 ? 'Base' : 'Robinhood';
 
     // 0. Macro Sentinel Flash Crash Guard: Halt buys during defensive regime
     if (this.macroSentinel.getCurrentRegime() === 'DEFENSIVE_CRASH') {
-      console.warn('[Macro Sentinel] ETH flash crash detected (DEFENSIVE_CRASH). Pausing new entries.');
+      this.logActivity({
+        stage: 'SCANNER',
+        message: `ETH Flash Crash terdeteksi (DEFENSIVE_CRASH). Pembelian baru dijeda demi keamanan modal.`,
+        level: 'ALERT',
+      });
       return 0;
     }
 
     const riskCheck = this.circuitBreaker.canOpenTrade();
     if (!riskCheck.allowed) {
-      console.warn(`[Risk Alert] Cannot open trades: ${riskCheck.reason}`);
+      this.logActivity({
+        stage: 'RISK_ENGINE',
+        message: `Circuit Breaker aktif: ${riskCheck.reason}. Pembelian ditahan.`,
+        level: 'WARN',
+      });
       return 0;
     }
 
     const aiClient = chainId === 8453 ? this.aiBase : this.aiRobinhood;
+    this.logActivity({
+      stage: 'SCANNER',
+      message: `🔍 Memindai trending pairs di jaringan ${chainName}...`,
+      level: 'INFO',
+    });
+
     const pairs = await this.scanner.scanTrendingPairs(chainId);
     let tradesOpened = 0;
 
@@ -262,7 +333,25 @@ export class ScalpingOrchestrator {
         isOpenTrading: true,
       });
 
+      if (this.onRiskEvaluation) {
+        await this.onRiskEvaluation({
+          chainName,
+          tokenSymbol: pair.baseToken.symbol,
+          tokenAddress: pair.baseToken.address,
+          stage: 'SECURITY_SCORE',
+          passed: securityScoreResult.passed,
+          score: securityScoreResult.totalScore,
+          reason: securityScoreResult.reasons.join(', '),
+        }).catch(() => {});
+      }
+
       if (!securityScoreResult.passed) {
+        this.logActivity({
+          stage: 'SECURITY',
+          message: `Token Security Score $${pair.baseToken.symbol}: ${securityScoreResult.totalScore}/100 ❌ REJECTED (${securityScoreResult.reasons.join(', ')})`,
+          tokenSymbol: pair.baseToken.symbol,
+          level: 'WARN',
+        });
         await this.blacklist.addToBlacklist(
           pair.baseToken.address,
           `Security score failed (${securityScoreResult.totalScore}/100): ${securityScoreResult.reasons.join(', ')}`,
@@ -271,6 +360,13 @@ export class ScalpingOrchestrator {
         );
         continue;
       }
+
+      this.logActivity({
+        stage: 'SECURITY',
+        message: `Token Security Score $${pair.baseToken.symbol}: ${securityScoreResult.totalScore}/100 ✅ PASSED`,
+        tokenSymbol: pair.baseToken.symbol,
+        level: 'SUCCESS',
+      });
 
       // 2.1 Microstructure and Anti-Dump Check
       const screenResult = this.screener.screenToken({
@@ -367,10 +463,22 @@ export class ScalpingOrchestrator {
           reasoning = `AI Auditor Approved: ${verdict.reasoning}`;
           signalsDetected = verdict.signalsDetected || ['Auditor Cleared'];
         }
+
+        if (this.onAiDebate) {
+          await this.onAiDebate({
+            chainName,
+            tokenSymbol: pair.baseToken.symbol,
+            tokenAddress: pair.baseToken.address,
+            hunterDecision: { action: 'BUY', confidence: 80, reasoning: 'Quantitative order flow and metrics passed pre-screening.' },
+            auditorDecision: verdict,
+            consensus: { action: decisionAction, consensusScore: confidence, takeProfitPct, stopLossPct },
+          }).catch(() => {});
+        }
       } else {
         // Mode C: Dual-Agent Debate Engine (Hunter vs Auditor Consensus)
+        let debate: any;
         try {
-          const debate = await this.debateEngine.debateToken(candidateInput);
+          debate = await this.debateEngine.debateToken(candidateInput);
           if (debate.auditorReasoning?.includes('AI evaluation error')) {
             const single = await aiClient.evaluateToken(candidateInput);
             decisionAction = single.action;
@@ -398,6 +506,17 @@ export class ScalpingOrchestrator {
           suggestedAllocEth = single.suggestedAllocEth;
           reasoning = single.reasoning;
           signalsDetected = single.signalsDetected;
+        }
+
+        if (this.onAiDebate && debate) {
+          await this.onAiDebate({
+            chainName,
+            tokenSymbol: pair.baseToken.symbol,
+            tokenAddress: pair.baseToken.address,
+            hunterDecision: debate.hunterVerdict || { action: 'BUY', confidence: debate.consensusScore, reasoning: debate.hunterReasoning },
+            auditorDecision: debate.auditorVerdict || { action: debate.action, confidence: debate.consensusScore, reasoning: debate.auditorReasoning },
+            consensus: debate,
+          }).catch(() => {});
         }
       }
 
@@ -434,8 +553,27 @@ export class ScalpingOrchestrator {
           positionSizeEth: targetAllocEth,
         });
 
+        if (this.onRiskEvaluation) {
+          await this.onRiskEvaluation({
+            chainName,
+            tokenSymbol: pair.baseToken.symbol,
+            tokenAddress: pair.baseToken.address,
+            stage: 'EV_CALCULATOR',
+            passed: evResult.allowed,
+            expectedValuePct: evResult.expectedValuePct,
+            winProbPct: Math.round(evResult.calibratedWinProbability * 100),
+            frictionPct: evResult.totalEstimatedCostPct,
+            reason: evResult.reason,
+          }).catch(() => {});
+        }
+
         if (!evResult.allowed) {
-          console.warn(`[Risk Engine Veto] EV insufficient for ${pair.baseToken.symbol}: ${evResult.reason}`);
+          this.logActivity({
+            stage: 'RISK_ENGINE',
+            message: `Risk Engine Veto $${pair.baseToken.symbol}: EV ${evResult.expectedValuePct >= 0 ? '+' : ''}${evResult.expectedValuePct}% < +1.5% setelah friction ${evResult.totalEstimatedCostPct.toFixed(1)}%. Eksekusi dibatalkan.`,
+            tokenSymbol: pair.baseToken.symbol,
+            level: 'WARN',
+          });
           await this.blacklist.addToBlacklist(
             pair.baseToken.address,
             `Risk Engine EV Veto: ${evResult.reason}`,
@@ -444,6 +582,13 @@ export class ScalpingOrchestrator {
           );
           continue;
         }
+
+        this.logActivity({
+          stage: 'ORDER',
+          message: `🚀 Membuka order BUY $${pair.baseToken.symbol} (${targetAllocEth} ETH) @ $${metrics.priceUsd}. EV: +${evResult.expectedValuePct}%.`,
+          tokenSymbol: pair.baseToken.symbol,
+          level: 'SUCCESS',
+        });
 
         const buyResult = await this.engine.executeBuy({
           chainId,
