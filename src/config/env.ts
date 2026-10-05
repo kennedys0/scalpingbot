@@ -30,6 +30,13 @@ const envSchema = z.object({
   SNIPER_SLIPPAGE_PCT: z.coerce.number().default(DEFAULT_CONFIG.SNIPER_SLIPPAGE_PCT),
   MIN_LIQUIDITY_USD: z.coerce.number().default(DEFAULT_CONFIG.MIN_LIQUIDITY_USD),
   MIN_AI_CONFIDENCE: z.coerce.number().default(DEFAULT_CONFIG.MIN_AI_CONFIDENCE),
+  AUTO_SNIPER_ENABLED: z.string().optional().transform((v) => v === 'true').default('false'),
+  SNIPER_TRADE_SIZE_ETH: z.coerce.number().default(DEFAULT_CONFIG.SNIPER_TRADE_SIZE_ETH),
+  SNIPER_MIN_LIQUIDITY_USD: z.coerce.number().default(DEFAULT_CONFIG.SNIPER_MIN_LIQUIDITY_USD),
+  SNIPER_MAX_AGE_MINUTES: z.coerce.number().default(DEFAULT_CONFIG.SNIPER_MAX_AGE_MINUTES),
+  SNIPER_MIN_SECURITY_SCORE: z.coerce.number().default(DEFAULT_CONFIG.SNIPER_MIN_SECURITY_SCORE),
+  SNIPER_AI_PRE_VETO: z.string().optional().transform((v) => v !== 'false').default('true'),
+  SNIPER_AI_ACTIVE_MONITOR: z.string().optional().transform((v) => v !== 'false').default('true'),
 });
 
 export type Env = z.infer<typeof envSchema>;

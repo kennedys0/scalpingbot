@@ -42,4 +42,18 @@ describe('Environment and Chain Configuration', () => {
     expect(rhConfig.nativeCurrency.symbol).toBe('ETH');
     expect(rhConfig.uniswapV4PoolManager).toBeDefined();
   });
+
+  it('parses new token auto-sniper configuration with sensible defaults', () => {
+    const env = parseEnv({
+      TELEGRAM_BOT_TOKEN: 'test_token',
+    });
+    expect((env as any).AUTO_SNIPER_ENABLED).toBe(false);
+    expect((env as any).SNIPER_TRADE_SIZE_ETH).toBe(0.01);
+    expect((env as any).SNIPER_MIN_LIQUIDITY_USD).toBe(2000);
+    expect((env as any).SNIPER_MAX_AGE_MINUTES).toBe(30);
+    expect((env as any).SNIPER_SLIPPAGE_PCT).toBe(15.0);
+    expect((env as any).SNIPER_MIN_SECURITY_SCORE).toBe(80);
+    expect((env as any).SNIPER_AI_PRE_VETO).toBe(true);
+    expect((env as any).SNIPER_AI_ACTIVE_MONITOR).toBe(true);
+  });
 });
