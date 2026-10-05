@@ -17,7 +17,7 @@ const envSchema = z.object({
   AI_MODEL_ROBINHOOD: z.string().default('anthropic/claude-3.5-sonnet'),
   WALLET_PRIVATE_KEY: z.string().default(''),
   BASE_RPC_URL: z.string().default('https://mainnet.base.org'),
-  BASE_RPC_FALLBACK: z.string().default('https://base.llamarpc.com'),
+  BASE_RPC_FALLBACK: z.string().default('https://1rpc.io/base'),
   ROBINHOOD_RPC_URL: z.string().default('https://rpc.mainnet.chain.robinhood.com'),
   ROBINHOOD_RPC_FALLBACK: z.string().default('https://robinhood-rpc.publicnode.com'),
   DEFAULT_TRADING_MODE: z.enum(['paper', 'live', 'shadow']).default(DEFAULT_CONFIG.DEFAULT_TRADING_MODE),

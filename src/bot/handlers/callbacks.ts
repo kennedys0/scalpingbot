@@ -1,5 +1,5 @@
 import { Bot, Context, InlineKeyboard } from 'grammy';
-import { formatDashboard, formatLiveFeedSummary, formatPriceWithIdr, formatEthWithIdr, generatePerformanceReport, formatWalletCard, formatDepositCard, formatWithdrawGuide, formatActivePositionsCard, ActivePositionDisplayItem, getDexScreenerUrl, getGeckoTerminalUrl } from '../messages/formatters.js';
+import { formatDashboard, formatLiveFeedSummary, formatPriceWithIdr, formatEthWithIdr, generatePerformanceReport, formatWalletCard, formatDepositCard, formatWithdrawGuide, formatActivePositionsCard, ActivePositionDisplayItem, getDexScreenerUrl, getGeckoTerminalUrl, escapeHtml } from '../messages/formatters.js';
 import { buildMainMenuKeyboard, buildWalletKeyboard } from '../keyboards/menus.js';
 import { DEFAULT_CONFIG } from '../../config/constants.js';
 import { rateService } from '../../core/services/rateService.js';
@@ -19,6 +19,8 @@ export function registerCallbacks(
       realizedPnlPct?: number;
       realizedPnlEth?: number;
       closePriceUsd?: number;
+      isRugpullWriteOff?: boolean;
+      error?: string;
     }>;
     getActivePositions: () => Promise<any[]>;
     getRecentActivities?: () => any[];
@@ -404,9 +406,22 @@ ${pnlEmoji} <b>PnL 24 Jam:</b>
       if (context.closePosition) {
         const res = await context.closePosition(positionId);
         if (!res.success) {
-          await ctx.reply(`❌ Gagal menutup posisi $${pos.tokenSymbol}.`, { parse_mode: 'HTML' });
+          await ctx.reply(`❌ Gagal menutup posisi $${pos.tokenSymbol}: ${res.error || 'Unknown error'}.`, { parse_mode: 'HTML' });
           return;
         }
+
+        if (res.isRugpullWriteOff) {
+          await ctx.reply(
+            `⚠️ <b>Posisi <code>$${pos.tokenSymbol}</code> Ditutup Paksa (Rugpull Write-Off)</b>\n` +
+            `────────────────────────\n` +
+            `❌ On-chain swap gagal karena token terindikasi rugpull / likuiditas ditarik / kontrak revert.\n` +
+            `📝 <b>Detail Error:</b> <code>${escapeHtml(res.error || 'Execution reverted on swap')}</code>\n` +
+            `✅ <b>Slot trading telah berhasil dibebaskan!</b> Token otomatis masuk ke Blacklist permanen.`,
+            { parse_mode: 'HTML' }
+          );
+          return;
+        }
+
         const pnlPct = res.realizedPnlPct ?? 0;
         const sign = pnlPct >= 0 ? '+' : '';
         const ethPnl = res.realizedPnlEth !== undefined ? ` (${sign}${res.realizedPnlEth.toFixed(4)} ETH)` : '';

@@ -18,6 +18,8 @@ export interface TelegramBotContext {
     realizedPnlPct?: number;
     realizedPnlEth?: number;
     closePriceUsd?: number;
+    isRugpullWriteOff?: boolean;
+    error?: string;
   }>;
   getActivePositions: () => Promise<any[]>;
   sniper: InstantSniper;

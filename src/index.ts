@@ -130,10 +130,12 @@ async function bootstrap() {
     setStrategyMode: (mode: 'rules_only' | 'ai_veto' | 'dual_agent') => orchestrator.setStrategyMode(mode),
     closeAllPositions: async () => {
       const active = await orchestrator.getPositionTracker().getActivePositions();
+      let closedCount = 0;
       for (const pos of active) {
-        await orchestrator.getExecutionEngine().executeSell(pos, pos.entryPriceUsd, 'PANIC_SELL');
+        const res = await orchestrator.closePosition(pos.id, 'PANIC_SELL');
+        if (res.success) closedCount++;
       }
-      return active.length;
+      return closedCount;
     },
     closePosition: async (positionId: string) => {
       return await orchestrator.closePosition(positionId, 'MANUAL_SELL');

@@ -8,7 +8,9 @@ export type ExitReason =
   | 'EMERGENCY_DUMP_EXIT'
   | 'PANIC_SELL'
   | 'TIME_EXPIRATION'
-  | 'MANUAL_SELL';
+  | 'MANUAL_SELL'
+  | 'RUGPULL_WRITE_OFF'
+  | 'RECONCILED_ON_CHAIN_ZERO_BALANCE';
 
 export type OnExitCallback = (position: Position, reason: ExitReason, currentPriceUsd: number) => Promise<void>;
 export type OnPartialTakeProfitCallback = (position: Position, currentPriceUsd: number, pctToSell: number) => Promise<void>;
@@ -21,6 +23,7 @@ export class PositionTicker {
   private isRunning: boolean = false;
   private lastPrices: Map<string, number> = new Map();
   private tickHistories: Map<string, number[]> = new Map();
+  private missingPriceCounts: Map<string, number> = new Map();
 
   constructor(
     tracker: PositionTracker,
@@ -37,7 +40,21 @@ export class PositionTicker {
 
     for (const pos of activePositions) {
       const currentPrice = priceMap[pos.tokenAddress] || priceMap[pos.tokenAddress.toLowerCase()];
-      if (currentPrice === undefined || currentPrice <= 0) continue;
+      if (currentPrice === undefined || currentPrice <= 0) {
+        const count = (this.missingPriceCounts.get(pos.id) || 0) + 1;
+        this.missingPriceCounts.set(pos.id, count);
+
+        // If price is completely missing/0 for >= 3 ticks (15s), pool has been drained or deleted (Rugpull)
+        if (count >= 3) {
+          console.warn(`🚨 [TICKER RUGPULL DETECTED] $${pos.tokenSymbol} price missing/0 for ${count} ticks. Triggering ANTI_DUMP exit.`);
+          await this.onExit(pos, 'ANTI_DUMP', 0);
+          this.missingPriceCounts.delete(pos.id);
+          this.lastPrices.delete(pos.id);
+          this.tickHistories.delete(pos.id);
+        }
+        continue;
+      }
+      this.missingPriceCounts.delete(pos.id);
 
       const rawPnl = ((currentPrice - pos.entryPriceUsd) / pos.entryPriceUsd) * 100;
       const pnlPct = Math.round(rawPnl * 100) / 100;

@@ -39,7 +39,7 @@ export const CHAIN_CONFIG: Record<number, ChainDefinition> = {
     },
     rpcUrls: {
       default: 'https://mainnet.base.org',
-      fallback: 'https://base.llamarpc.com',
+      fallback: 'https://1rpc.io/base',
       mevProtected: 'https://base.mevblocker.io', // Anti-sandwich private builder RPC
     },
     blockExplorers: {

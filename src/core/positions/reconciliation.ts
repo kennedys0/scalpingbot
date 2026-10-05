@@ -40,9 +40,9 @@ export async function reconcilePositionsOnChain(
       if (balance === 0n) {
         await tracker.closePosition(
           pos.id,
-          pos.entryPriceUsd,
+          0,
           'RECONCILED_ON_CHAIN_ZERO_BALANCE',
-          0
+          -pos.costEth
         );
         closedCount++;
         reconciledPositions.push(`$${pos.tokenSymbol} (${pos.tokenAddress})`);

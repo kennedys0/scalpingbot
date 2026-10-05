@@ -121,7 +121,14 @@ export class BaseRouterExecutor {
       ]);
 
       if (balance === 0n) {
-        return { success: false, error: 'Cannot sell: Zero token balance in wallet on-chain' };
+        // Zero token balance on-chain means the tokens are already sold, burned, or liquidated
+        return {
+          success: true,
+          realizedPnlEth: -position.costEth,
+          realizedPnlPct: -100,
+          filledPriceUsd: 0,
+          txHash: '0xzero_balance_reconciled',
+        };
       }
 
       // Approve router if allowance is insufficient
@@ -131,12 +138,13 @@ export class BaseRouterExecutor {
           functionName: 'approve',
           args: [targetRouterAddress, maxUint256],
         });
-        await wallet.sendTransaction({
+        const approveTx = await wallet.sendTransaction({
           account,
           to: tokenAddr,
           data: approveData,
           chain: null,
         });
+        await publicClient.waitForTransactionReceipt({ hash: approveTx, timeout: 20000 }).catch(() => {});
       }
 
       // Encode sell swap calldata

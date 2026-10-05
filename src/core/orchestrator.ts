@@ -736,6 +736,31 @@ export class ScalpingOrchestrator {
           txHash: sellResult.txHash,
         });
       }
+    } else if (!sellResult.success) {
+      // Rugpull / liquidity drained / revert fallback: write off position to free up the slot
+      console.warn(`⚠️ [RUGPULL EXIT] Sell swap failed on ${reason} for $${position.tokenSymbol}: ${sellResult.error}. Writing off position.`);
+      await this.tracker.closePosition(position.id, 0, 'RUGPULL_WRITE_OFF', -position.costEth);
+      await this.blacklist.addToBlacklist(position.tokenAddress, `Rugpull exit write-off: ${sellResult.error || 'Revert on sell'}`);
+      this.circuitBreaker.recordClosedTrade(-position.costEth);
+
+      await this.memory.recordPostMortem({
+        tokenSymbol: position.tokenSymbol,
+        outcome: 'LOSS',
+        pnlPct: -100,
+        lessonLearned: `Token $${position.tokenSymbol} rugged/honeypot. Sell failed with: ${sellResult.error || 'revert'}. Position written off.`,
+      });
+
+      if (this.onTradeExit) {
+        await this.onTradeExit({
+          chainId: position.chainId,
+          chainName: position.chainId === 8453 ? 'Base' : 'Robinhood',
+          tokenSymbol: position.tokenSymbol,
+          reason: 'RUGPULL_WRITE_OFF',
+          pnlPct: -100,
+          pnlEth: -position.costEth,
+          closePriceUsd: 0,
+        });
+      }
     }
   }
 
@@ -748,58 +773,107 @@ export class ScalpingOrchestrator {
     realizedPnlPct?: number;
     realizedPnlEth?: number;
     closePriceUsd?: number;
+    isRugpullWriteOff?: boolean;
+    error?: string;
   }> {
     const position = await this.tracker.getPositionById(positionId);
     if (!position || position.status !== 'OPEN') {
-      return { success: false };
+      return { success: false, error: 'Position not found or already closed' };
     }
 
     let price = currentPrice;
     if (price === undefined || price <= 0) {
       try {
         const livePrices = await fetchLiveTokenPrices([position.tokenAddress]);
-        price = livePrices[position.tokenAddress.toLowerCase()] || position.entryPriceUsd;
+        price = livePrices[position.tokenAddress.toLowerCase()] || 0;
       } catch {
-        price = position.entryPriceUsd;
+        price = 0;
       }
     }
 
     const sellResult = await this.engine.executeSell(position, price, reason);
-    if (sellResult.success && sellResult.realizedPnlEth !== undefined) {
-      this.circuitBreaker.recordClosedTrade(sellResult.realizedPnlEth);
+    if (sellResult.success) {
+      if (sellResult.realizedPnlEth !== undefined) {
+        this.circuitBreaker.recordClosedTrade(sellResult.realizedPnlEth);
 
-      const pnlPct = sellResult.realizedPnlPct ?? 0;
-      const isWin = pnlPct > 0;
-      const lesson = isWin
-        ? `Order flow momentum follow-through on ${position.tokenSymbol} confirmed. Closed on ${reason} with profit.`
-        : `Exit on ${reason} for ${position.tokenSymbol} at ${pnlPct.toFixed(1)}%. Watch out for reversal on sudden volume decay.`;
+        const pnlPct = sellResult.realizedPnlPct ?? 0;
+        const isWin = pnlPct > 0;
+        const lesson = isWin
+          ? `Order flow momentum follow-through on ${position.tokenSymbol} confirmed. Closed on ${reason} with profit.`
+          : `Exit on ${reason} for ${position.tokenSymbol} at ${pnlPct.toFixed(1)}%. Watch out for reversal on sudden volume decay.`;
 
-      await this.memory.recordPostMortem({
-        tokenSymbol: position.tokenSymbol,
-        outcome: isWin ? 'WIN' : 'LOSS',
-        pnlPct,
-        lessonLearned: lesson,
-      });
-
-      if (this.onTradeExit) {
-        await this.onTradeExit({
-          chainId: position.chainId,
-          chainName: position.chainId === 8453 ? 'Base' : 'Robinhood',
+        await this.memory.recordPostMortem({
           tokenSymbol: position.tokenSymbol,
-          reason,
+          outcome: isWin ? 'WIN' : 'LOSS',
           pnlPct,
-          pnlEth: sellResult.realizedPnlEth,
-          closePriceUsd: price,
-          txHash: sellResult.txHash,
+          lessonLearned: lesson,
         });
+
+        if (this.onTradeExit) {
+          await this.onTradeExit({
+            chainId: position.chainId,
+            chainName: position.chainId === 8453 ? 'Base' : 'Robinhood',
+            tokenSymbol: position.tokenSymbol,
+            reason,
+            pnlPct,
+            pnlEth: sellResult.realizedPnlEth,
+            closePriceUsd: price,
+            txHash: sellResult.txHash,
+          });
+        }
       }
+
+      return {
+        success: true,
+        realizedPnlPct: sellResult.realizedPnlPct,
+        realizedPnlEth: sellResult.realizedPnlEth,
+        closePriceUsd: price,
+      };
+    }
+
+    // IF ON-CHAIN SELL FAILED (e.g. Rugpull, Honeypot, Liquidity Drained, Zero Balance):
+    // Force write off the position so the slot is freed and user is not trapped!
+    console.warn(`⚠️ [RUGPULL WRITE-OFF] Sell failed for $${position.tokenSymbol} (${position.tokenAddress}): ${sellResult.error}. Writing off position.`);
+    await this.tracker.closePosition(
+      position.id,
+      0,
+      'RUGPULL_WRITE_OFF',
+      -position.costEth
+    );
+
+    await this.blacklist.addToBlacklist(
+      position.tokenAddress,
+      `Rugpull write-off: ${sellResult.error || 'On-chain sell reverted'}`
+    );
+
+    this.circuitBreaker.recordClosedTrade(-position.costEth);
+
+    await this.memory.recordPostMortem({
+      tokenSymbol: position.tokenSymbol,
+      outcome: 'LOSS',
+      pnlPct: -100,
+      lessonLearned: `Token $${position.tokenSymbol} rugged/honeypot. Sell failed: ${sellResult.error || 'revert'}. Position written off.`,
+    });
+
+    if (this.onTradeExit) {
+      await this.onTradeExit({
+        chainId: position.chainId,
+        chainName: position.chainId === 8453 ? 'Base' : 'Robinhood',
+        tokenSymbol: position.tokenSymbol,
+        reason: 'RUGPULL_WRITE_OFF',
+        pnlPct: -100,
+        pnlEth: -position.costEth,
+        closePriceUsd: 0,
+      });
     }
 
     return {
-      success: sellResult.success,
-      realizedPnlPct: sellResult.realizedPnlPct,
-      realizedPnlEth: sellResult.realizedPnlEth,
-      closePriceUsd: price,
+      success: true,
+      isRugpullWriteOff: true,
+      error: sellResult.error,
+      realizedPnlPct: -100,
+      realizedPnlEth: -position.costEth,
+      closePriceUsd: 0,
     };
   }
 
