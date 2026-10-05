@@ -1,7 +1,22 @@
-import { parseEther, parseUnits } from 'viem';
+import { parseEther, parseAbi, encodeFunctionData, maxUint256 } from 'viem';
 import { ViemClientManager } from '../viemClient.js';
 import { BuyOrderParams, BuyResult, SellResult } from '../types.js';
 import { Position } from '../../positions/tracker.js';
+
+const ROUTER_ABI = parseAbi([
+  'function swapExactETHForTokensSupportingFeeOnTransferTokens(uint amountOutMin, address[] calldata path, address to, uint deadline) external payable',
+  'function swapExactTokensForETHSupportingFeeOnTransferTokens(uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline) external',
+  'function WETH() external view returns (address)',
+]);
+
+const ERC20_ABI = parseAbi([
+  'function approve(address spender, uint256 amount) external returns (bool)',
+  'function allowance(address owner, address spender) external view returns (uint256)',
+  'function balanceOf(address account) external view returns (uint256)',
+  'function decimals() external view returns (uint8)',
+]);
+
+const BASE_WETH: `0x${string}` = '0x4200000000000000000000000000000000000006';
 
 export class BaseRouterExecutor {
   private viemManager: ViemClientManager;
@@ -14,7 +29,6 @@ export class BaseRouterExecutor {
     order: BuyOrderParams & { routerTarget?: 'v2' | 'aerodrome' | 'v3' }
   ): Promise<BuyResult> {
     const wallet = this.viemManager.getWalletClient(8453);
-    const publicClient = this.viemManager.getPublicClient(8453);
 
     if (!wallet) {
       return { success: false, error: 'Wallet private key not configured for live trading on Base' };
@@ -30,11 +44,24 @@ export class BaseRouterExecutor {
           ? ('0xcF77a3Ba9A5CA399B7c97c7488454543B7374BE' as `0x${string}`)
           : ('0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24' as `0x${string}`); // Uniswap V2 Router02 Base
 
-      // Estimate gas and execute transaction
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 1200);
+      const buyData = encodeFunctionData({
+        abi: ROUTER_ABI,
+        functionName: 'swapExactETHForTokensSupportingFeeOnTransferTokens',
+        args: [
+          0n, // amountOutMin (rely on slippage checks / private RPC)
+          [BASE_WETH, order.tokenAddress as `0x${string}`],
+          account.address,
+          deadline,
+        ],
+      });
+
+      // Execute on-chain buy swap with calldata
       const txHash = await wallet.sendTransaction({
         account,
         to: targetRouterAddress,
         value: parseEther(order.amountEth.toString()),
+        data: buyData,
         chain: null,
       });
 
@@ -58,6 +85,8 @@ export class BaseRouterExecutor {
     routerTarget?: 'v2' | 'aerodrome' | 'v3'
   ): Promise<SellResult> {
     const wallet = this.viemManager.getWalletClient(8453);
+    const publicClient = this.viemManager.getPublicClient(8453);
+
     if (!wallet) {
       return { success: false, error: 'Wallet private key not configured for live trading on Base' };
     }
@@ -71,6 +100,57 @@ export class BaseRouterExecutor {
           ? ('0xcF77a3Ba9A5CA399B7c97c7488454543B7374BE' as `0x${string}`)
           : ('0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24' as `0x${string}`); // Uniswap V2 Router02 Base
 
+      const tokenAddr = position.tokenAddress as `0x${string}`;
+
+      // Check on-chain balance & allowance
+      const [balance, allowance] = await Promise.all([
+        publicClient.readContract({
+          address: tokenAddr,
+          abi: ERC20_ABI,
+          functionName: 'balanceOf',
+          args: [account.address],
+        }).catch(() => 0n),
+        publicClient.readContract({
+          address: tokenAddr,
+          abi: ERC20_ABI,
+          functionName: 'allowance',
+          args: [account.address, targetRouterAddress],
+        }).catch(() => 0n),
+      ]);
+
+      if (balance === 0n) {
+        return { success: false, error: 'Cannot sell: Zero token balance in wallet on-chain' };
+      }
+
+      // Approve router if allowance is insufficient
+      if (allowance < balance) {
+        const approveData = encodeFunctionData({
+          abi: ERC20_ABI,
+          functionName: 'approve',
+          args: [targetRouterAddress, maxUint256],
+        });
+        await wallet.sendTransaction({
+          account,
+          to: tokenAddr,
+          data: approveData,
+          chain: null,
+        });
+      }
+
+      // Encode sell swap calldata
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 1200);
+      const sellData = encodeFunctionData({
+        abi: ROUTER_ABI,
+        functionName: 'swapExactTokensForETHSupportingFeeOnTransferTokens',
+        args: [
+          balance,
+          0n, // amountOutMin
+          [tokenAddr, BASE_WETH],
+          account.address,
+          deadline,
+        ],
+      });
+
       const pnlPct = ((currentPriceUsd - position.entryPriceUsd) / position.entryPriceUsd) * 100;
       const realizedPnlEth = position.costEth * (pnlPct / 100);
 
@@ -78,6 +158,7 @@ export class BaseRouterExecutor {
         account,
         to: targetRouterAddress,
         value: 0n,
+        data: sellData,
         chain: null,
       });
 

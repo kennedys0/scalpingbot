@@ -49,13 +49,14 @@ export interface MicrostructureMetrics {
 }
 
 export function calculateMicrostructureMetrics(pair: DexPairData): MicrostructureMetrics {
-  const priceUsd = parseFloat(pair.priceUsd || '0');
-  const priceChange5m = pair.priceChange?.m5 ?? 0;
-  const priceChange1h = pair.priceChange?.h1 ?? 0;
-  const volume5m = pair.volume?.m5 ?? 0;
-  const volume1h = pair.volume?.h1 ?? 0;
-  const buys5m = pair.txns?.m5?.buys ?? 0;
-  const sells5m = pair.txns?.m5?.sells ?? 0;
+  const parsedPrice = parseFloat(pair.priceUsd || '0');
+  const priceUsd = isNaN(parsedPrice) ? 0 : Math.max(0, parsedPrice);
+  const priceChange5m = isNaN(pair.priceChange?.m5 ?? 0) ? 0 : (pair.priceChange?.m5 ?? 0);
+  const priceChange1h = isNaN(pair.priceChange?.h1 ?? 0) ? 0 : (pair.priceChange?.h1 ?? 0);
+  const volume5m = Math.max(0, isNaN(pair.volume?.m5 ?? 0) ? 0 : (pair.volume?.m5 ?? 0));
+  const volume1h = Math.max(0, isNaN(pair.volume?.h1 ?? 0) ? 0 : (pair.volume?.h1 ?? 0));
+  const buys5m = Math.max(0, isNaN(pair.txns?.m5?.buys ?? 0) ? 0 : (pair.txns?.m5?.buys ?? 0));
+  const sells5m = Math.max(0, isNaN(pair.txns?.m5?.sells ?? 0) ? 0 : (pair.txns?.m5?.sells ?? 0));
   const totalTxns5m = buys5m + sells5m;
 
   const buyPressureRatio5m = totalTxns5m > 0 ? buys5m / totalTxns5m : 0.5;
@@ -65,8 +66,10 @@ export function calculateMicrostructureMetrics(pair: DexPairData): Microstructur
   const estimatedSellVol5m = volume5m * (1 - buyPressureRatio5m);
   const volumeDelta5m = estimatedBuyVol5m - estimatedSellVol5m;
 
-  const liquidityUsd = pair.liquidity?.usd ?? 0;
-  const fdv = pair.fdv ?? (liquidityUsd > 0 ? liquidityUsd * 2 : 1);
+  const rawLiquidity = pair.liquidity?.usd ?? 0;
+  const liquidityUsd = isNaN(rawLiquidity) ? 0 : Math.max(0, rawLiquidity);
+  const rawFdv = pair.fdv ?? (liquidityUsd > 0 ? liquidityUsd * 2 : 1);
+  const fdv = isNaN(rawFdv) ? 1 : Math.max(1, rawFdv);
   const liquidityToFdvRatio = fdv > 0 ? liquidityUsd / fdv : 0;
 
   // Bullish order flow: Buy ratio >= 60% and 5m volume delta is positive

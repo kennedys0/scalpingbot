@@ -20,7 +20,7 @@ const envSchema = z.object({
   BASE_RPC_FALLBACK: z.string().default('https://base.llamarpc.com'),
   ROBINHOOD_RPC_URL: z.string().default('https://rpc.robinhoodchain.com'),
   ROBINHOOD_RPC_FALLBACK: z.string().default('https://robinhoodchain.blockscout.com/api/eth-rpc'),
-  DEFAULT_TRADING_MODE: z.enum(['paper', 'live']).default(DEFAULT_CONFIG.DEFAULT_TRADING_MODE),
+  DEFAULT_TRADING_MODE: z.enum(['paper', 'live', 'shadow']).default(DEFAULT_CONFIG.DEFAULT_TRADING_MODE),
   MAX_TAKE_PROFIT_PCT: z.coerce.number().default(DEFAULT_CONFIG.MAX_TAKE_PROFIT_PCT),
   MAX_LOSS_PER_TRADE_PCT: z.coerce.number().default(DEFAULT_CONFIG.MAX_LOSS_PER_TRADE_PCT),
   MAX_DAILY_LOSS_ETH: z.coerce.number().default(DEFAULT_CONFIG.MAX_DAILY_LOSS_ETH),

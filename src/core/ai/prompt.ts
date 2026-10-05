@@ -53,14 +53,22 @@ export interface ScalpCandidateInput {
   smartMoneyInfo?: string;
 }
 
+function sanitizeString(str: string, maxLength: number = 32): string {
+  if (!str) return 'UNKNOWN';
+  return str.replace(/[\r\n\t"'{}\[\]\\]/g, '').substring(0, maxLength).trim();
+}
+
 export function buildScalpUserPrompt(input: ScalpCandidateInput): string {
   const m = input.metrics;
   const memoryBlock = input.pastLessons ? `\n\n${input.pastLessons}` : '';
   const smartMoneyBlock = input.smartMoneyInfo ? `\n\nSmart Money Whale Alert:\n- ${input.smartMoneyInfo}` : '';
 
+  const safeName = sanitizeString(input.tokenName, 32);
+  const safeSymbol = sanitizeString(input.tokenSymbol, 16);
+
   return `Analyze this live DEX pair for a potential rapid scalp entry:
 
-Token: ${input.tokenName} ($${input.tokenSymbol})
+Token: ${safeName} ($${safeSymbol})
 Address: ${input.tokenAddress}
 Network: ${input.chainName}
 Current Price: $${input.priceUsd}
