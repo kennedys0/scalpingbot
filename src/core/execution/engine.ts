@@ -105,4 +105,29 @@ export class ExecutionEngine {
 
     return result;
   }
+
+  public async executePartialSell(
+    position: Position,
+    currentPriceUsd: number,
+    pctToSell: number = 50
+  ): Promise<SellResult> {
+    if (this.mode === 'paper') {
+      return await this.paperTrader.simulatePartialSell(position, currentPriceUsd, pctToSell);
+    } else {
+      const fraction = pctToSell / 100;
+      const partialPos: Position = {
+        ...position,
+        amountTokens: position.amountTokens * fraction,
+        costEth: position.costEth * fraction,
+      };
+
+      if (position.chainId === 8453) {
+        if (!this.baseRouter) throw new Error('Base router not initialized');
+        return await this.baseRouter.executeSell(partialPos, currentPriceUsd);
+      } else {
+        if (!this.rhRouter) throw new Error('Robinhood router not initialized');
+        return await this.rhRouter.executeSell(partialPos, currentPriceUsd);
+      }
+    }
+  }
 }

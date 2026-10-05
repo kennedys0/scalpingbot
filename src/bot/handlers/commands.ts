@@ -8,6 +8,7 @@ export function registerCommands(
     getDashboardData: () => any;
     getTradesHistory: () => any[];
     blacklistManager: any;
+    closeAllPositions?: () => Promise<number>;
   }
 ): void {
   bot.command(['start', 'menu'], async (ctx: Context) => {
@@ -25,6 +26,18 @@ export function registerCommands(
     const trades = context.getTradesHistory();
     const reportText = generatePerformanceReport(trades);
     await ctx.reply(reportText, { parse_mode: 'HTML' });
+  });
+
+  bot.command('panic', async (ctx: Context) => {
+    if (context.closeAllPositions) {
+      await ctx.reply('🚨 <b>EXECUTING PANIC SELL ALL POSITIONS...</b>', { parse_mode: 'HTML' });
+      const closedCount = await context.closeAllPositions();
+      await ctx.reply(`🚨 <b>PANIC SELL COMPLETE</b>: ${closedCount} active positions closed at market price!`, {
+        parse_mode: 'HTML',
+      });
+    } else {
+      await ctx.reply('⚠️ Panic sell not configured.', { parse_mode: 'HTML' });
+    }
   });
 
   bot.command('blacklist', async (ctx: Context) => {

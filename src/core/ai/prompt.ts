@@ -49,10 +49,15 @@ export interface ScalpCandidateInput {
   chainName: string;
   priceUsd: number;
   metrics: MicrostructureMetrics;
+  pastLessons?: string;
+  smartMoneyInfo?: string;
 }
 
 export function buildScalpUserPrompt(input: ScalpCandidateInput): string {
   const m = input.metrics;
+  const memoryBlock = input.pastLessons ? `\n\n${input.pastLessons}` : '';
+  const smartMoneyBlock = input.smartMoneyInfo ? `\n\nSmart Money Whale Alert:\n- ${input.smartMoneyInfo}` : '';
+
   return `Analyze this live DEX pair for a potential rapid scalp entry:
 
 Token: ${input.tokenName} ($${input.tokenSymbol})
@@ -72,7 +77,7 @@ Pre-Calculated Quantitative Metrics:
 - Fully Diluted Valuation (FDV): $${m?.fdv ?? 0}
 - Liquidity to FDV Ratio: ${m?.liquidityToFdvRatio ?? 0}
 - Order Flow Bullish Signal: ${m?.isOrderFlowBullish ? 'YES' : 'NO'}
-- Volatility Score: ${m?.volatilityScore ?? 0} / 100
+- Volatility Score: ${m?.volatilityScore ?? 0} / 100${memoryBlock}${smartMoneyBlock}
 
 Perform step-by-step reasoning internally, then return ONLY the JSON evaluation output.`;
 }

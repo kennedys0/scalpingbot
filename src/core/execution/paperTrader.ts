@@ -62,4 +62,32 @@ export class PaperTrader {
       txHash: `0xpaper_sell_${Date.now().toString(16)}`,
     };
   }
+
+  public async simulatePartialSell(
+    position: Position,
+    currentPriceUsd: number,
+    pctToSell: number = 50
+  ): Promise<SellResult> {
+    const fraction = pctToSell / 100;
+    const filledPriceUsd = currentPriceUsd * (1 - 0.005);
+    const tokensSold = position.amountTokens * fraction;
+    const costEthSold = position.costEth * fraction;
+
+    const proceedsUsd = tokensSold * filledPriceUsd;
+    const proceedsEth = proceedsUsd / this.ethPriceUsd;
+
+    const realizedPnlEth = proceedsEth - costEthSold;
+    const realizedPnlPct = ((filledPriceUsd - position.entryPriceUsd) / position.entryPriceUsd) * 100;
+
+    // Credit proceeds (minus simulated gas) back to virtual balance
+    this.virtualBalanceEth += (proceedsEth - 0.0003);
+
+    return {
+      success: true,
+      realizedPnlEth,
+      realizedPnlPct,
+      filledPriceUsd,
+      txHash: `0xpaper_part_sell_${Date.now().toString(16)}`,
+    };
+  }
 }

@@ -31,6 +31,10 @@ export class MacroEthSentinel {
     return this.currentRegime;
   }
 
+  public getCurrentRegime(): MarketRegime {
+    return this.currentRegime;
+  }
+
   public shouldPauseNewBuys(): boolean {
     return this.currentRegime === 'DEFENSIVE_CRASH';
   }

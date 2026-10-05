@@ -17,7 +17,7 @@ async function bootstrap() {
     initialVirtualEth: 1.0,
     openRouterBaseUrl: env.OPENROUTER_BASE_URL,
     openRouterKeyBase: env.OPENROUTER_API_KEY_BASE,
-    openRouterKeyRobinhood: env.OPENROUTER_API_KEY_ROBINHOOD,
+    openRouterKeyRobinhood: env.OPENROUTER_API_KEY_ROBINHOOD || env.OPENROUTER_API_KEY_BASE,
     aiModelBase: env.AI_MODEL_BASE,
     aiModelRobinhood: env.AI_MODEL_ROBINHOOD,
     walletPrivateKey: env.WALLET_PRIVATE_KEY,

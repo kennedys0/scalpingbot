@@ -38,5 +38,9 @@ export function createTelegramBot(ctx: TelegramBotContext): Bot {
   registerCallbacks(bot, ctx);
   registerSnipeInput(bot, ctx);
 
+  bot.catch((err) => {
+    console.error('⚠️ Telegram Bot Error caught:', err.message || err);
+  });
+
   return bot;
 }

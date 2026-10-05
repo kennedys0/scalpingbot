@@ -84,13 +84,18 @@ export class PositionTracker {
     });
   }
 
-  public async markPartialTakeProfit(id: string, newStopLossPct: number = -1.0): Promise<void> {
+  public async markPartialTakeProfit(
+    id: string,
+    newStopLossPct: number = -1.0,
+    fractionSold: number = 0.5
+  ): Promise<void> {
     this.storage.update((data) => {
       const pos = data.positions.find((p: Position) => p.id === id);
       if (pos) {
         pos.partialTakeProfitDone = true;
         pos.stopLossPct = newStopLossPct; // Set Stop Loss to +1% profit (Breakeven)
-        pos.amountTokens = pos.amountTokens / 2; // 50% sold, 50% remaining
+        pos.amountTokens = pos.amountTokens * (1 - fractionSold);
+        pos.costEth = pos.costEth * (1 - fractionSold);
       }
     });
   }

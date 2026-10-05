@@ -1,3 +1,12 @@
+export function escapeHtml(str: string | undefined | null): string {
+  if (!str) return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 export interface DashboardData {
   isRunning: boolean;
   mode: 'paper' | 'live';
@@ -49,11 +58,13 @@ export interface TradeSignalCardData {
 
 export function formatTradeSignalCard(card: TradeSignalCardData): string {
   const shortCA = `${card.tokenAddress.substring(0, 6)}...${card.tokenAddress.substring(card.tokenAddress.length - 4)}`;
-  const signalsList = card.signalsDetected.map((s) => `• ${s}`).join('\n');
+  const signalsList = card.signalsDetected.map((s) => `• ${escapeHtml(s)}`).join('\n');
+  const safeSymbol = escapeHtml(card.tokenSymbol);
+  const safeReasoning = escapeHtml(card.reasoning);
 
-  return `🚀 <b>[${card.chainName.toUpperCase()} - AI SCALP ENTRY]</b>
+  return `🚀 <b>[${escapeHtml(card.chainName).toUpperCase()} - AI SCALP ENTRY]</b>
 ────────────────────────
-<b>Token:</b> $${card.tokenSymbol} (<code>${shortCA}</code>)
+<b>Token:</b> $${safeSymbol} (<code>${shortCA}</code>)
 <b>Entry Price:</b> $${card.entryPriceUsd.toFixed(6)}
 <b>Position Size:</b> ${card.amountEth} ETH
 <b>Take Profit:</b> +${card.takeProfitPct.toFixed(1)}% ($${(card.entryPriceUsd * (1 + card.takeProfitPct / 100)).toFixed(6)})
@@ -64,7 +75,7 @@ export function formatTradeSignalCard(card: TradeSignalCardData): string {
 ${signalsList || '• Order flow & volume surge confirmed'}
 
 <b>AI Reasoning:</b>
-<i>"${card.reasoning}"</i>
+<i>"${safeReasoning}"</i>
 ────────────────────────`;
 }
 
@@ -82,11 +93,13 @@ export function formatExitCard(data: ExitCardData): string {
   const isProfit = data.pnlPct >= 0;
   const emoji = isProfit ? '🎉' : '🛑';
   const sign = isProfit ? '+' : '';
+  const safeSymbol = escapeHtml(data.tokenSymbol);
+  const safeReason = escapeHtml(data.reason);
 
-  return `${emoji} <b>[${data.chainName.toUpperCase()} - POSITION CLOSED]</b>
+  return `${emoji} <b>[${escapeHtml(data.chainName).toUpperCase()} - POSITION CLOSED]</b>
 ────────────────────────
-<b>Token:</b> $${data.tokenSymbol}
-<b>Exit Reason:</b> <code>${data.reason}</code>
+<b>Token:</b> $${safeSymbol}
+<b>Exit Reason:</b> <code>${safeReason}</code>
 <b>Close Price:</b> $${data.closePriceUsd.toFixed(6)}
 <b>Realized PnL:</b> ${isProfit ? '🟢' : '🔴'} <b>${sign}${data.pnlPct.toFixed(2)}% (${sign}${data.pnlEth.toFixed(4)} ETH)</b>
 ────────────────────────`;
@@ -118,7 +131,7 @@ export function generatePerformanceReport(trades: any[]): string {
 <b>Win Rate:</b> <code>${winRate}%</code>
 <b>Net PnL:</b> ${pnlEmoji} <code>${pnlSign}${totalNetPnlEth.toFixed(4)} ETH</code>
 
-🏆 <b>Best Trade:</b> $${best.tokenSymbol} (+${best.realizedPnlPct?.toFixed(1)}%)
-📉 <b>Worst Trade:</b> $${worst.tokenSymbol} (${worst.realizedPnlPct?.toFixed(1)}%)
+🏆 <b>Best Trade:</b> $${escapeHtml(best.tokenSymbol)} (+${best.realizedPnlPct?.toFixed(1)}%)
+📉 <b>Worst Trade:</b> $${escapeHtml(worst.tokenSymbol)} (${worst.realizedPnlPct?.toFixed(1)}%)
 ────────────────────────`;
 }

@@ -32,7 +32,12 @@ export class JsonStorage {
     if (fs.existsSync(this.filePath)) {
       try {
         const raw = fs.readFileSync(this.filePath, 'utf-8');
-        this.memoryData = JSON.parse(raw);
+        const parsed = JSON.parse(raw);
+        this.memoryData = {
+          positions: Array.isArray(parsed.positions) ? parsed.positions : [],
+          trades: Array.isArray(parsed.trades) ? parsed.trades : [],
+          settings: parsed.settings && typeof parsed.settings === 'object' ? parsed.settings : {},
+        };
       } catch {
         this.save();
       }
@@ -44,8 +49,14 @@ export class JsonStorage {
   private save(): void {
     if (this.isMemory) return;
     const tempPath = `${this.filePath}.tmp`;
-    fs.writeFileSync(tempPath, JSON.stringify(this.memoryData, null, 2), 'utf-8');
-    fs.renameSync(tempPath, this.filePath);
+    const serialized = JSON.stringify(this.memoryData, null, 2);
+    try {
+      fs.writeFileSync(tempPath, serialized, 'utf-8');
+      fs.renameSync(tempPath, this.filePath);
+    } catch {
+      // Fallback in case of Windows file locking or antivirus interference
+      fs.writeFileSync(this.filePath, serialized, 'utf-8');
+    }
   }
 
   public getData(): StorageData {

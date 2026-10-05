@@ -179,6 +179,12 @@ export class ScalpingOrchestrator {
   public async runScanCycle(chainId: number): Promise<number> {
     if (!this.isEngineRunning) return 0;
 
+    // 0. Macro Sentinel Flash Crash Guard: Halt buys during defensive regime
+    if (this.macroSentinel.getCurrentRegime() === 'DEFENSIVE_CRASH') {
+      console.warn('[Macro Sentinel] ETH flash crash detected (DEFENSIVE_CRASH). Pausing new entries.');
+      return 0;
+    }
+
     const riskCheck = this.circuitBreaker.canOpenTrade();
     if (!riskCheck.allowed) {
       console.warn(`[Risk Alert] Cannot open trades: ${riskCheck.reason}`);
@@ -218,35 +224,87 @@ export class ScalpingOrchestrator {
 
       if (!metrics.isOrderFlowBullish) continue;
 
-      // 3. AI Scalping Evaluation (OpenRouter)
-      const decision = await aiClient.evaluateToken({
+      // 3. Prepare AI Candidate Context with Episodic Memory & Smart Money info
+      const pastLessons = this.memory.formatLessonsForPrompt();
+      const smartMoneyCheck = this.smartMoneyRadar.checkTransaction(
+        pair.baseToken.address,
+        pair.baseToken.address,
+        1.0
+      );
+
+      const candidateInput = {
         tokenName: pair.baseToken.name,
         tokenSymbol: pair.baseToken.symbol,
         tokenAddress: pair.baseToken.address,
         chainName: chainId === 8453 ? 'Base' : 'Robinhood',
         priceUsd: metrics.priceUsd,
         metrics,
-      });
+        pastLessons: pastLessons || undefined,
+        smartMoneyInfo: smartMoneyCheck.isSmartMoney
+          ? `Smart Money Inflow detected (${smartMoneyCheck.label}), boost recommended.`
+          : undefined,
+      };
 
-      if (decision.action === 'AVOID' || decision.confidence < this.minAiConfidence) {
+      // 4. Dual-Agent Debate Evaluation (Hunter vs Auditor Consensus)
+      let decisionAction: 'BUY' | 'WAIT' | 'AVOID' = 'WAIT';
+      let confidence = 0;
+      let takeProfitPct = 15;
+      let stopLossPct = 5;
+      let suggestedAllocEth = this.defaultTradeSizeEth;
+      let reasoning = '';
+      let signalsDetected: string[] = [];
+
+      try {
+        const debate = await this.debateEngine.debateToken(candidateInput);
+        if (debate.auditorReasoning?.includes('AI evaluation error')) {
+          // Auditor unavailable, fallback to chain single agent
+          const single = await aiClient.evaluateToken(candidateInput);
+          decisionAction = single.action;
+          confidence = single.confidence;
+          takeProfitPct = single.takeProfitPct;
+          stopLossPct = single.stopLossPct;
+          suggestedAllocEth = single.suggestedAllocEth;
+          reasoning = single.reasoning;
+          signalsDetected = single.signalsDetected;
+        } else {
+          decisionAction = debate.action;
+          confidence = debate.consensusScore;
+          takeProfitPct = debate.takeProfitPct;
+          stopLossPct = debate.stopLossPct;
+          suggestedAllocEth = debate.suggestedAllocEth;
+          reasoning = `[Hunter]: ${debate.hunterReasoning} | [Auditor]: ${debate.auditorReasoning}`;
+          signalsDetected = debate.signalsDetected;
+        }
+      } catch {
+        const single = await aiClient.evaluateToken(candidateInput);
+        decisionAction = single.action;
+        confidence = single.confidence;
+        takeProfitPct = single.takeProfitPct;
+        stopLossPct = single.stopLossPct;
+        suggestedAllocEth = single.suggestedAllocEth;
+        reasoning = single.reasoning;
+        signalsDetected = single.signalsDetected;
+      }
+
+      if (decisionAction === 'AVOID' || confidence < this.minAiConfidence) {
         // Auto-blacklist tokens deemed unviable by AI
         await this.blacklist.addToBlacklist(
           pair.baseToken.address,
-          `AI Rejected (${decision.confidence}%): ${decision.reasoning}`
+          `AI Rejected (${confidence}%): ${reasoning}`
         );
         continue;
       }
 
-      if (decision.action === 'BUY' && decision.confidence >= this.minAiConfidence) {
+      if (decisionAction === 'BUY' && confidence >= this.minAiConfidence) {
         // Enforce hard-stop & max take-profit clamp (TP max 30%, SL max 10%)
-        const clampedTP = this.circuitBreaker.clampTakeProfit(decision.takeProfitPct);
-        const clampedSL = this.circuitBreaker.clampStopLoss(decision.stopLossPct);
+        const clampedTP = this.circuitBreaker.clampTakeProfit(takeProfitPct);
+        const clampedSL = this.circuitBreaker.clampStopLoss(stopLossPct);
 
         const buyResult = await this.engine.executeBuy({
           chainId,
           tokenAddress: pair.baseToken.address,
           tokenSymbol: pair.baseToken.symbol,
-          amountEth: Math.min(decision.suggestedAllocEth, this.defaultTradeSizeEth),
+          amountEth: Math.min(suggestedAllocEth || this.defaultTradeSizeEth, this.defaultTradeSizeEth),
           currentPriceUsd: metrics.priceUsd,
           takeProfitPct: clampedTP,
           stopLossPct: clampedSL,
@@ -265,9 +323,9 @@ export class ScalpingOrchestrator {
               amountEth: this.defaultTradeSizeEth,
               takeProfitPct: clampedTP,
               stopLossPct: clampedSL,
-              confidence: decision.confidence,
-              reasoning: decision.reasoning,
-              signalsDetected: decision.signalsDetected,
+              confidence,
+              reasoning,
+              signalsDetected,
             });
           }
         }
@@ -282,6 +340,11 @@ export class ScalpingOrchestrator {
     currentPrice: number,
     pctToSell: number
   ): Promise<void> {
+    const sellResult = await this.engine.executePartialSell(position, currentPrice, pctToSell);
+    if (sellResult.success && sellResult.realizedPnlEth !== undefined) {
+      this.circuitBreaker.recordClosedTrade(sellResult.realizedPnlEth);
+    }
+
     if (this.onPartialTradeExit) {
       const pnlPct = ((currentPrice - position.entryPriceUsd) / position.entryPriceUsd) * 100;
       await this.onPartialTradeExit({

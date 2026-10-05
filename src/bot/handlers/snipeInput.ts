@@ -2,6 +2,7 @@ import { Bot, Context } from 'grammy';
 import { isAddress } from 'viem';
 import { buildSnipeActionKeyboard } from '../keyboards/menus.js';
 import { InstantSniper } from '../../core/sniper/instantSnipe.js';
+import { escapeHtml } from '../messages/formatters.js';
 
 export function registerSnipeInput(
   bot: Bot,
@@ -49,7 +50,7 @@ Pilih aksi snipe atau audit AI di bawah ini:`;
         { parse_mode: 'HTML' }
       );
     } else {
-      await ctx.reply(`❌ <b>SNIPE FAILED:</b> ${result.error}`, { parse_mode: 'HTML' });
+      await ctx.reply(`❌ <b>SNIPE FAILED:</b> ${escapeHtml(result.error)}`, { parse_mode: 'HTML' });
     }
   });
 }
