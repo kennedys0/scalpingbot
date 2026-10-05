@@ -1,4 +1,7 @@
+import axios from 'axios';
 import { JsonStorage } from '../storage/db.js';
+import { rateService } from './services/rateService.js';
+import { fetchLiveTokenPrices } from './services/livePriceService.js';
 import { PositionTracker, Position } from './positions/tracker.js';
 import { PositionTicker, ExitReason } from './positions/ticker.js';
 import { PaperTrader } from './execution/paperTrader.js';
@@ -73,6 +76,10 @@ export interface OrchestratorConfig {
   sniperTradeSizeEth?: number;
   maxLossPerTradePct?: number;
   maxDailyLossEth?: number;
+  maxConcurrentPositions?: number;
+  sniperMaxAgeMinutes?: number;
+  sniperMinLiquidityUsd?: number;
+  sniperAiPreVeto?: boolean;
   enableOnChainSimulation?: boolean;
   onTradeSignal?: (signal: any) => Promise<void>;
   onTradeExit?: (exit: any) => Promise<void>;
@@ -111,8 +118,10 @@ export class ScalpingOrchestrator {
   private minAiConfidence: number;
   private defaultTradeSizeEth: number;
   private sniperTradeSizeEth: number;
+  private maxConcurrentPositions: number;
   private isEngineRunning: boolean = true;
   private enableOnChainSimulation: boolean;
+  private sniperAiPreVeto: boolean;
   private scanTimer: NodeJS.Timeout | null = null;
   private recentActivities: ActivityLogEntry[] = [];
   private onTradeSignal?: (signal: any) => Promise<void>;
@@ -121,6 +130,7 @@ export class ScalpingOrchestrator {
   private onAiActivity?: (activity: ActivityLogEntry) => Promise<void>;
   private onAiDebate?: (debate: AiDebateInfo) => Promise<void>;
   private onRiskEvaluation?: (risk: RiskEvaluationInfo) => Promise<void>;
+  private isScanningNewPools: boolean = false;
 
   constructor(config: OrchestratorConfig) {
     this.storage = config.storage;
@@ -133,7 +143,12 @@ export class ScalpingOrchestrator {
     });
     this.evCalculator = new ExpectedValueCalculator(config.minRequiredEdgePct ?? 1.5);
     this.securityScorer = new TokenSecurityScorer(config.minSecurityScore ?? 80);
-    this.newTokenScanner = new NewPoolsScanner({ maxAgeMinutes: 30, minLiquidityUsd: 2000 });
+    this.maxConcurrentPositions = config.maxConcurrentPositions ?? 3;
+    this.sniperAiPreVeto = config.sniperAiPreVeto ?? true;
+    this.newTokenScanner = new NewPoolsScanner({
+      maxAgeMinutes: config.sniperMaxAgeMinutes ?? 30,
+      minLiquidityUsd: config.sniperMinLiquidityUsd ?? 2000,
+    });
 
     this.viemManager = new ViemClientManager(config.walletPrivateKey);
     const baseRouter = new BaseRouterExecutor(this.viemManager);
@@ -164,6 +179,7 @@ export class ScalpingOrchestrator {
       baseUrl: config.openRouterBaseUrl,
       model: config.aiModelBase,
       chainId: 8453,
+      role: 'hunter',
     });
 
     this.aiRobinhood = new AiScalpEngine({
@@ -171,6 +187,7 @@ export class ScalpingOrchestrator {
       baseUrl: config.openRouterBaseUrl,
       model: config.aiModelRobinhood,
       chainId: 4663,
+      role: 'auditor',
     });
 
     // Dual-Agent Debate Engine: Bull Hunter (aiBase) vs Bear Auditor (aiRobinhood)
@@ -270,6 +287,10 @@ export class ScalpingOrchestrator {
     return this.sniper;
   }
 
+  public getMaxConcurrentPositions(): number {
+    return this.maxConcurrentPositions;
+  }
+
   public getStrategyMode(): 'rules_only' | 'ai_veto' | 'dual_agent' {
     return this.strategyMode;
   }
@@ -310,10 +331,22 @@ export class ScalpingOrchestrator {
       return 0;
     }
 
+    // 1. Strict Max Concurrent Positions Check:
+    // If active positions reached maximum (e.g. 3), HALT scanning immediately!
+    const totalOpenPositions = await this.tracker.getActivePositions();
+    if (totalOpenPositions.length >= this.maxConcurrentPositions) {
+      this.logActivity({
+        stage: 'SCANNER',
+        message: `⏸️ Posisi aktif mencapai batas maksimal (${totalOpenPositions.length}/${this.maxConcurrentPositions}). Pemindaian dijeda sampai ada posisi yang ditutup (TP/SL).`,
+        level: 'INFO',
+      });
+      return 0;
+    }
+
     const aiClient = chainId === 8453 ? this.aiBase : this.aiRobinhood;
     this.logActivity({
       stage: 'SCANNER',
-      message: `🔍 Memindai trending pairs di jaringan ${chainName}...`,
+      message: `🔍 Memindai trending pairs di jaringan ${chainName}... (Slot aktif: ${totalOpenPositions.length}/${this.maxConcurrentPositions})`,
       level: 'INFO',
     });
 
@@ -321,6 +354,17 @@ export class ScalpingOrchestrator {
     let tradesOpened = 0;
 
     for (const pair of pairs.slice(0, 5)) {
+      // Re-check active positions count inside loop
+      const currentActive = await this.tracker.getActivePositions();
+      if (currentActive.length >= this.maxConcurrentPositions) {
+        break;
+      }
+
+      // Deduplication: Never open duplicate position for token already held
+      if (await this.tracker.hasOpenPositionForToken(pair.baseToken.address)) {
+        continue;
+      }
+
       // 0. Auto-Blacklist Check: Skip tokens previously flagged as bad/rejected
       if (this.blacklist.isBlacklisted(pair.baseToken.address)) {
         continue;
@@ -456,19 +500,19 @@ export class ScalpingOrchestrator {
       } else if (this.strategyMode === 'ai_veto') {
         // Mode B: Single AI Risk Auditor Veto (Focus on LLM strength, saves 50% API calls)
         const auditor = chainId === 8453 ? this.aiBase : this.aiRobinhood;
-        const verdict = await auditor.evaluateToken(candidateInput);
+        const verdict = await auditor.evaluateToken(candidateInput, 'auditor');
         if (verdict.action === 'AVOID') {
           decisionAction = 'AVOID';
           confidence = verdict.confidence;
-          reasoning = `AI Auditor Veto: ${verdict.reasoning}`;
+          reasoning = `Veto AI Auditor: ${verdict.reasoning}`;
         } else {
           decisionAction = 'BUY';
           confidence = verdict.confidence;
           takeProfitPct = verdict.takeProfitPct || 20;
           stopLossPct = verdict.stopLossPct || 6;
           suggestedAllocEth = verdict.suggestedAllocEth || this.defaultTradeSizeEth;
-          reasoning = `AI Auditor Approved: ${verdict.reasoning}`;
-          signalsDetected = verdict.signalsDetected || ['Auditor Cleared'];
+          reasoning = `Disetujui AI Auditor: ${verdict.reasoning}`;
+          signalsDetected = verdict.signalsDetected || ['Lolos Audit Risiko'];
         }
 
         if (this.onAiDebate) {
@@ -695,6 +739,70 @@ export class ScalpingOrchestrator {
     }
   }
 
+  public async closePosition(
+    positionId: string,
+    reason: ExitReason = 'MANUAL_SELL',
+    currentPrice?: number
+  ): Promise<{
+    success: boolean;
+    realizedPnlPct?: number;
+    realizedPnlEth?: number;
+    closePriceUsd?: number;
+  }> {
+    const position = await this.tracker.getPositionById(positionId);
+    if (!position || position.status !== 'OPEN') {
+      return { success: false };
+    }
+
+    let price = currentPrice;
+    if (price === undefined || price <= 0) {
+      try {
+        const livePrices = await fetchLiveTokenPrices([position.tokenAddress]);
+        price = livePrices[position.tokenAddress.toLowerCase()] || position.entryPriceUsd;
+      } catch {
+        price = position.entryPriceUsd;
+      }
+    }
+
+    const sellResult = await this.engine.executeSell(position, price, reason);
+    if (sellResult.success && sellResult.realizedPnlEth !== undefined) {
+      this.circuitBreaker.recordClosedTrade(sellResult.realizedPnlEth);
+
+      const pnlPct = sellResult.realizedPnlPct ?? 0;
+      const isWin = pnlPct > 0;
+      const lesson = isWin
+        ? `Order flow momentum follow-through on ${position.tokenSymbol} confirmed. Closed on ${reason} with profit.`
+        : `Exit on ${reason} for ${position.tokenSymbol} at ${pnlPct.toFixed(1)}%. Watch out for reversal on sudden volume decay.`;
+
+      await this.memory.recordPostMortem({
+        tokenSymbol: position.tokenSymbol,
+        outcome: isWin ? 'WIN' : 'LOSS',
+        pnlPct,
+        lessonLearned: lesson,
+      });
+
+      if (this.onTradeExit) {
+        await this.onTradeExit({
+          chainId: position.chainId,
+          chainName: position.chainId === 8453 ? 'Base' : 'Robinhood',
+          tokenSymbol: position.tokenSymbol,
+          reason,
+          pnlPct,
+          pnlEth: sellResult.realizedPnlEth,
+          closePriceUsd: price,
+          txHash: sellResult.txHash,
+        });
+      }
+    }
+
+    return {
+      success: sellResult.success,
+      realizedPnlPct: sellResult.realizedPnlPct,
+      realizedPnlEth: sellResult.realizedPnlEth,
+      closePriceUsd: price,
+    };
+  }
+
   public startPeriodicScanner(intervalMs: number = 30000): void {
     if (this.scanTimer) return;
     this.scanTimer = setInterval(async () => {
@@ -714,19 +822,50 @@ export class ScalpingOrchestrator {
     }
   }
 
+  /**
+   * BUG-02 FIX: Starts the real-time position ticker (TP/SL/Trailing Stop engine).
+   * Must be called after orchestrator is initialized to activate all exit triggers.
+   * @param intervalMs Tick interval in ms (default 5000 = 5 seconds)
+   * @param priceFetcher Async function returning a map of tokenAddress -> currentPriceUsd
+   */
+  public startPositionTicker(
+    intervalMs: number = 5000,
+    priceFetcher: () => Promise<Record<string, number>>
+  ): void {
+    this.ticker.start(intervalMs, priceFetcher);
+    console.log(`✅ Position Ticker started (interval: ${intervalMs}ms). TP/SL/Trailing Stop ACTIVE.`);
+  }
+
+  public stopPositionTicker(): void {
+    this.ticker.stop();
+  }
+
   public getNewTokenScanner(): NewPoolsScanner {
     return this.newTokenScanner;
   }
 
   public async evaluateAndSnipeNewPools(chainId: number): Promise<{ snipedCount: number; vetoedCount: number }> {
+    // 1. Strict Max Concurrent Positions Check:
+    // If active positions reached maximum (e.g. 3), do not scan or snipe new pools!
+    const totalActive = (await this.tracker.getActivePositions()).length;
+    if (totalActive >= this.maxConcurrentPositions) {
+      return { snipedCount: 0, vetoedCount: 0 };
+    }
+
     const candidates = await this.newTokenScanner.scanNewPools(chainId);
     let snipedCount = 0;
     let vetoedCount = 0;
 
-    for (const candidate of candidates) {
-      const openPositions = await this.tracker.getActivePositions(chainId);
-      if (openPositions.length >= 3) {
+    // Evaluate top 3 most liquid/recent candidates per cycle to prevent proxy congestion
+    for (const candidate of candidates.slice(0, 3)) {
+      const openPositions = await this.tracker.getActivePositions();
+      if (openPositions.length >= this.maxConcurrentPositions) {
         break;
+      }
+
+      // Deduplication: Never open duplicate position for token already held
+      if (await this.tracker.hasOpenPositionForToken(candidate.baseTokenAddress)) {
+        continue;
       }
 
       const riskCheck = this.circuitBreaker.canOpenTrade();
@@ -738,14 +877,107 @@ export class ScalpingOrchestrator {
         continue;
       }
 
-      // Fast security check
+      // 1. Fast guard: Reject Uniswap V4 pools (singleton hooks incompatible with V2/Aerodrome routers)
+      if (candidate.dexId && (candidate.dexId.toLowerCase().includes('v4') || candidate.dexId.toLowerCase().includes('uniswap-v4'))) {
+        this.newTokenScanner.markProcessed(candidate.baseTokenAddress);
+        await this.blacklist.addToBlacklist(candidate.baseTokenAddress, 'Unsupported DEX: Uniswap V4', 'UNSUPPORTED_DEX');
+        this.logActivity({
+          stage: 'SECURITY',
+          message: `🛡️ [SNIPER REJECT] $${candidate.tokenSymbol}: DEX Uniswap V4 tidak didukung router eksekusi ⛔`,
+          tokenSymbol: candidate.tokenSymbol,
+          level: 'WARN',
+        });
+        continue;
+      }
+
+      // 2. Fetch live DexScreener pair to verify Real Quote Reserve & DEX labels
+      let realQuoteReserveUsd = candidate.realQuoteReserveUsd;
+      let actualBuys5m = candidate.buys5m ?? 0;
+      let actualSells5m = candidate.sells5m ?? 0;
+      let actualVolume5m = candidate.volume5m ?? 0;
+      let actualFdv = candidate.fdvUsd || candidate.liquidityUsd * 4;
+
+      try {
+        const dexRes = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${candidate.baseTokenAddress}`, {
+          timeout: 4000,
+        });
+        const pair = dexRes.data?.pairs?.[0];
+        if (pair) {
+          // Reject Uniswap V4 if detected on DexScreener
+          if (pair.dexId === 'uniswap' && pair.labels?.includes('v4')) {
+            this.newTokenScanner.markProcessed(candidate.baseTokenAddress);
+            await this.blacklist.addToBlacklist(candidate.baseTokenAddress, 'Unsupported DEX: Uniswap V4', 'UNSUPPORTED_DEX');
+            this.logActivity({
+              stage: 'SECURITY',
+              message: `🛡️ [SNIPER REJECT] $${candidate.tokenSymbol}: DEX Uniswap V4 tidak didukung router eksekusi ⛔`,
+              tokenSymbol: candidate.tokenSymbol,
+              level: 'WARN',
+            });
+            continue;
+          }
+
+          // Calculate real quote reserve (ETH / USDC value)
+          const quoteAmount = parseFloat(pair.liquidity?.quote || '0');
+          const isQuoteEth = (pair.quoteToken?.symbol?.toUpperCase().includes('ETH')) || 
+                             (pair.quoteToken?.address?.toLowerCase() === '0x4200000000000000000000000000000000000006');
+          const ethPriceUsd = rateService.getEthPriceUsd();
+          realQuoteReserveUsd = isQuoteEth ? quoteAmount * ethPriceUsd : quoteAmount;
+
+          if (pair.txns?.m5) {
+            actualBuys5m = pair.txns.m5.buys || 0;
+            actualSells5m = pair.txns.m5.sells || 0;
+          }
+          if (pair.volume?.m5 !== undefined) {
+            actualVolume5m = pair.volume.m5;
+          }
+          if (pair.fdv) {
+            actualFdv = pair.fdv;
+          }
+        }
+      } catch {
+        // Fallback gracefully if DexScreener is unreachable
+      }
+
+      // 3. Phantom Liquidity Trap check: Real quote reserve must be >= $1,500 (or ~0.5 ETH)
+      if (realQuoteReserveUsd !== undefined && realQuoteReserveUsd < 1500) {
+        this.newTokenScanner.markProcessed(candidate.baseTokenAddress);
+        await this.blacklist.addToBlacklist(
+          candidate.baseTokenAddress,
+          `Phantom Liquidity Trap: Real reserve only $${realQuoteReserveUsd.toFixed(2)} (Reported: $${Math.round(candidate.liquidityUsd)})`,
+          'PHANTOM_LIQUIDITY'
+        );
+        this.logActivity({
+          stage: 'SECURITY',
+          message: `🛡️ [SNIPER REJECT] $${candidate.tokenSymbol}: Terdeteksi Likuiditas Palsu (Cadangan riil hanya $${realQuoteReserveUsd.toFixed(2)}, FDV $${Math.round(actualFdv)}) ⛔`,
+          tokenSymbol: candidate.tokenSymbol,
+          level: 'ALERT',
+        });
+        continue;
+      }
+
+      // 4. Activity & Volume check: reject pools with only 1 deployer txn and zero volume (when metrics are present)
+      const hasTxnMetrics = candidate.buys5m !== undefined || candidate.volume5m !== undefined || actualBuys5m > 0 || actualVolume5m > 0;
+      if (hasTxnMetrics && (actualBuys5m + actualSells5m < 2 && actualVolume5m < 50)) {
+        this.newTokenScanner.markProcessed(candidate.baseTokenAddress);
+        this.logActivity({
+          stage: 'SECURITY',
+          message: `🛡️ [SNIPER REJECT] $${candidate.tokenSymbol}: Transaksi organik tidak mencukupi (${actualBuys5m} buy / ${actualSells5m} sell, Vol: $${actualVolume5m.toFixed(0)}) ⛔`,
+          tokenSymbol: candidate.tokenSymbol,
+          level: 'WARN',
+        });
+        continue;
+      }
+
+      const effectiveLiquidity = realQuoteReserveUsd && realQuoteReserveUsd > 0 ? realQuoteReserveUsd * 2 : candidate.liquidityUsd;
+
+      // 5. Fast security check with effective real liquidity
       const secScore = this.securityScorer.calculateScore({
         canSell: true,
         isHoneypot: false,
         buyTaxPct: 0,
         sellTaxPct: 0,
-        liquidityUsd: candidate.liquidityUsd,
-        fdvUsd: candidate.liquidityUsd * 4,
+        liquidityUsd: effectiveLiquidity,
+        fdvUsd: actualFdv,
         isOpenTrading: true,
       });
 
@@ -761,55 +993,73 @@ export class ScalpingOrchestrator {
         continue;
       }
 
-      // Stage 1: AI Pre-Snipe Veto Gate
-      const aiEngine = chainId === 8453 ? this.aiBase : this.aiRobinhood;
-      const aiVerdict = await aiEngine.evaluateToken({
-        tokenName: candidate.tokenName,
-        tokenSymbol: candidate.tokenSymbol,
-        tokenAddress: candidate.baseTokenAddress,
-        chainName: chainId === 8453 ? 'Base' : 'Robinhood',
-        priceUsd: candidate.priceUsd,
-        metrics: {
-          priceUsd: candidate.priceUsd,
-          priceChange5m: 0,
-          priceChange1h: 0,
-          volume5m: candidate.liquidityUsd,
-          volume1h: candidate.liquidityUsd,
-          buys5m: 10,
-          sells5m: 2,
-          buyPressureRatio5m: 0.8,
-          volumeDelta5m: candidate.liquidityUsd * 0.5,
-          liquidityUsd: candidate.liquidityUsd,
-          fdv: candidate.liquidityUsd * 4,
-          liquidityToFdvRatio: 0.25,
-          isOrderFlowBullish: true,
-          volatilityScore: 50,
-        },
-      });
+      let aiVerdict: {
+        action?: string;
+        confidence?: number;
+        takeProfitPct?: number;
+        stopLossPct?: number;
+        reasoning?: string;
+        signalsDetected?: string[];
+      } | null = null;
 
-      if (aiVerdict.action === 'AVOID') {
-        vetoedCount++;
-        this.newTokenScanner.markProcessed(candidate.baseTokenAddress);
-        await this.blacklist.addToBlacklist(candidate.baseTokenAddress, `AI Pre-Snipe Veto: ${aiVerdict.reasoning}`, 'AI_REJECT_TEMP');
-        this.logActivity({
-          stage: 'SECURITY',
-          message: `🚫 [PRE-SNIPE VETO] $${candidate.tokenSymbol}: ${aiVerdict.reasoning}`,
+      // 6. Stage 1: AI Pre-Snipe Veto Gate (if enabled) with REAL metrics
+      if (this.sniperAiPreVeto) {
+        const totalTxns = actualBuys5m + actualSells5m;
+        const buyPressure = totalTxns > 0 ? actualBuys5m / totalTxns : 0.5;
+        const volumeDelta = actualVolume5m * (buyPressure - 0.5) * 2;
+
+        const aiEngine = chainId === 8453 ? this.aiBase : this.aiRobinhood;
+        aiVerdict = await aiEngine.evaluateToken({
+          tokenName: candidate.tokenName,
           tokenSymbol: candidate.tokenSymbol,
-          level: 'ALERT',
-        });
-        continue;
+          tokenAddress: candidate.baseTokenAddress,
+          chainName: chainId === 8453 ? 'Base' : 'Robinhood',
+          priceUsd: candidate.priceUsd,
+          metrics: {
+            priceUsd: candidate.priceUsd,
+            priceChange5m: 0,
+            priceChange1h: 0,
+            volume5m: actualVolume5m,
+            volume1h: candidate.volume1h || actualVolume5m * 2,
+            buys5m: actualBuys5m,
+            sells5m: actualSells5m,
+            buyPressureRatio5m: buyPressure,
+            volumeDelta5m: volumeDelta,
+            liquidityUsd: effectiveLiquidity,
+            fdv: actualFdv,
+            liquidityToFdvRatio: effectiveLiquidity / actualFdv,
+            isOrderFlowBullish: buyPressure >= 0.6 && volumeDelta > 0,
+            volatilityScore: 50,
+          },
+        }, 'auditor');
+
+        if (aiVerdict.action === 'AVOID') {
+          vetoedCount++;
+          this.newTokenScanner.markProcessed(candidate.baseTokenAddress);
+          await this.blacklist.addToBlacklist(candidate.baseTokenAddress, `Veto AI Auditor: ${aiVerdict.reasoning}`, 'AI_REJECT_TEMP');
+          this.logActivity({
+            stage: 'SECURITY',
+            message: `🚫 [PRE-SNIPE VETO] $${candidate.tokenSymbol}: ${aiVerdict.reasoning}`,
+            tokenSymbol: candidate.tokenSymbol,
+            level: 'ALERT',
+          });
+          continue;
+        }
       }
 
       // Passed AI check -> execute snipe
       this.newTokenScanner.markProcessed(candidate.baseTokenAddress);
+      const snipeTP = (aiVerdict?.takeProfitPct && aiVerdict.takeProfitPct > 0) ? aiVerdict.takeProfitPct : 30.0;
+      const snipeSL = (aiVerdict?.stopLossPct && aiVerdict.stopLossPct > 0) ? aiVerdict.stopLossPct : 8.0;
+
       const buyRes = await this.sniper.executeSnipe({
         chainId,
         tokenAddress: candidate.baseTokenAddress,
         tokenSymbol: candidate.tokenSymbol,
         currentPriceUsd: candidate.priceUsd,
         amountEth: this.sniperTradeSizeEth,
-        takeProfitPct: aiVerdict.takeProfitPct > 0 ? aiVerdict.takeProfitPct : 30.0,
-        stopLossPct: aiVerdict.stopLossPct > 0 ? aiVerdict.stopLossPct : 8.0,
+        takeProfitPct: snipeTP,
+        stopLossPct: snipeSL,
       });
 
       if (buyRes.success) {
@@ -826,13 +1076,13 @@ export class ScalpingOrchestrator {
             chainName: chainId === 8453 ? 'Base' : 'Robinhood',
             tokenSymbol: candidate.tokenSymbol,
             tokenAddress: candidate.baseTokenAddress,
-            entryPriceUsd: buyRes.entryPriceUsd || candidate.priceUsd,
-            amountEth: buyRes.amountEth || this.defaultTradeSizeEth,
-            takeProfitPct: aiVerdict.takeProfitPct > 0 ? aiVerdict.takeProfitPct : 30.0,
-            stopLossPct: aiVerdict.stopLossPct > 0 ? aiVerdict.stopLossPct : 8.0,
-            confidence: aiVerdict.confidence || 85,
-            reasoning: aiVerdict.reasoning || 'Auto-snipe of new liquidity pool',
-            signalsDetected: ['New Pool Launch', ...aiVerdict.signalsDetected],
+            entryPriceUsd: buyRes.filledPriceUsd || candidate.priceUsd,
+            amountEth: this.sniperTradeSizeEth || this.defaultTradeSizeEth,
+            takeProfitPct: snipeTP,
+            stopLossPct: snipeSL,
+            confidence: aiVerdict?.confidence || 85,
+            reasoning: aiVerdict?.reasoning || 'Auto-snipe of new liquidity pool',
+            signalsDetected: ['New Pool Launch', ...(aiVerdict?.signalsDetected || [])],
             isSnipe: true,
           });
         }
@@ -845,11 +1095,15 @@ export class ScalpingOrchestrator {
   public startNewPoolsScanner(intervalMs: number = 10000): void {
     if (this.newPoolsTimer) return;
     this.newPoolsTimer = setInterval(async () => {
+      if (this.isScanningNewPools) return;
+      this.isScanningNewPools = true;
       try {
         await this.evaluateAndSnipeNewPools(8453);
         await this.evaluateAndSnipeNewPools(4663);
       } catch (err) {
         console.warn(`New pools scan error: ${(err as Error).message}`);
+      } finally {
+        this.isScanningNewPools = false;
       }
     }, intervalMs);
   }

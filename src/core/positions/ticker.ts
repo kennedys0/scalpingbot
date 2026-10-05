@@ -7,7 +7,8 @@ export type ExitReason =
   | 'ANTI_DUMP'
   | 'EMERGENCY_DUMP_EXIT'
   | 'PANIC_SELL'
-  | 'TIME_EXPIRATION';
+  | 'TIME_EXPIRATION'
+  | 'MANUAL_SELL';
 
 export type OnExitCallback = (position: Position, reason: ExitReason, currentPriceUsd: number) => Promise<void>;
 export type OnPartialTakeProfitCallback = (position: Position, currentPriceUsd: number, pctToSell: number) => Promise<void>;
@@ -151,6 +152,14 @@ export class PositionTicker {
         console.warn(`Position ticker error: ${(err as Error).message}`);
       }
     }, intervalMs);
+  }
+
+  public getLastPrice(positionId: string): number | undefined {
+    return this.lastPrices.get(positionId);
+  }
+
+  public getAllLastPrices(): Map<string, number> {
+    return new Map(this.lastPrices);
   }
 
   public stop(): void {

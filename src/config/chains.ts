@@ -66,8 +66,8 @@ export const CHAIN_CONFIG: Record<number, ChainDefinition> = {
       decimals: 18,
     },
     rpcUrls: {
-      default: 'https://rpc.robinhoodchain.com',
-      fallback: 'https://robinhoodchain.blockscout.com/api/eth-rpc',
+      default: 'https://rpc.mainnet.chain.robinhood.com',
+      fallback: 'https://robinhood-rpc.publicnode.com',
     },
     blockExplorers: {
       default: {

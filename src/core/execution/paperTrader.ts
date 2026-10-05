@@ -1,12 +1,17 @@
 import { BuyOrderParams, BuyResult, SellResult } from './types.js';
 import { Position } from '../positions/tracker.js';
+import { rateService } from '../services/rateService.js';
 
 export class PaperTrader {
   private virtualBalanceEth: number;
-  private ethPriceUsd: number = 2500; // Reference ETH price for token count calculations
 
   constructor(initialEth: number = 1.0) {
     this.virtualBalanceEth = initialEth;
+  }
+
+  private get ethPriceUsd(): number {
+    // BUG-06 FIX: Use real-time ETH price instead of hardcoded $2500
+    return rateService.getEthPriceUsd();
   }
 
   public getVirtualBalanceEth(): number {

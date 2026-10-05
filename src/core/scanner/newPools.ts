@@ -5,12 +5,20 @@ export interface NewPoolCandidate {
   chainId: number;
   poolAddress: string;
   baseTokenAddress: string;
+  quoteTokenAddress?: string;
   tokenSymbol: string;
   tokenName: string;
+  dexId?: string;
   createdAtMs: number;
   ageMinutes: number;
   priceUsd: number;
   liquidityUsd: number;
+  realQuoteReserveUsd?: number;
+  fdvUsd?: number;
+  volume5m?: number;
+  volume1h?: number;
+  buys5m?: number;
+  sells5m?: number;
   source: 'geckoterminal' | 'dexscreener';
 }
 
@@ -22,7 +30,9 @@ export interface NewPoolsScannerOptions {
 export class NewPoolsScanner {
   private maxAgeMinutes: number;
   private minLiquidityUsd: number;
-  private processedAddresses = new Set<string>();
+  // ISSUE-07 FIX: Store with timestamp to enable TTL-based cleanup (prevent unbounded memory growth)
+  private processedAddresses = new Map<string, number>(); // address -> timestamp added
+  private readonly PROCESSED_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours TTL
 
   constructor(options: NewPoolsScannerOptions = {}) {
     this.maxAgeMinutes = options.maxAgeMinutes ?? 30;
@@ -31,13 +41,21 @@ export class NewPoolsScanner {
 
   public markProcessed(address: string): void {
     if (address) {
-      this.processedAddresses.add(address.toLowerCase());
+      this.processedAddresses.set(address.toLowerCase(), Date.now());
     }
   }
 
   public isProcessed(address: string): boolean {
     if (!address) return false;
-    return this.processedAddresses.has(address.toLowerCase());
+    const key = address.toLowerCase();
+    const addedAt = this.processedAddresses.get(key);
+    if (addedAt === undefined) return false;
+    // Check if TTL expired
+    if (Date.now() - addedAt > this.PROCESSED_TTL_MS) {
+      this.processedAddresses.delete(key);
+      return false;
+    }
+    return true;
   }
 
   public clearCache(): void {
@@ -99,21 +117,50 @@ export class NewPoolsScanner {
           continue;
         }
 
+        // Layer 1: Filter Unsupported DEXes (e.g. Uniswap V4 which uses singleton hooks incompatible with V2/Aerodrome routers)
+        const dexId = pool?.relationships?.dex?.data?.id || '';
+        if (dexId && (dexId.toLowerCase().includes('v4') || dexId.toLowerCase().includes('uniswap-v4'))) {
+          continue;
+        }
+
+        // Layer 2: Filter Empty / Fake Deployer-Only Pools (must have minimum activity if txn data is present)
+        const volume5m = parseFloat(attrs.volume_usd?.m5 || '0');
+        const volume1h = parseFloat(attrs.volume_usd?.h1 || '0');
+        const buys5m = parseInt(attrs.transactions?.m5?.buys || '0', 10);
+        const sells5m = parseInt(attrs.transactions?.m5?.sells || '0', 10);
+        const totalTxns = buys5m + sells5m;
+
+        if (attrs.transactions?.m5 !== undefined) {
+          if (totalTxns < 2 && volume5m < 50) {
+            continue; // Filter single deployer init transaction with $0 volume
+          }
+        }
+
         // Parse token symbol and name from poolName (e.g. "TOKEN / WETH")
         const nameParts = poolName.split('/');
         const symbol = nameParts[0]?.trim() || 'NEW_TOKEN';
         const name = symbol;
+        const fdvUsd = parseFloat(attrs.fdv_usd || '0');
+        const quoteRelId = pool?.relationships?.quote_token?.data?.id || '';
+        const quoteTokenAddress = quoteRelId.replace(`${geckoNetwork}_`, '');
 
         candidates.push({
           chainId,
           poolAddress,
           baseTokenAddress: baseTokenAddress.toLowerCase(),
+          quoteTokenAddress: quoteTokenAddress ? quoteTokenAddress.toLowerCase() : undefined,
           tokenSymbol: symbol,
           tokenName: name,
+          dexId,
           createdAtMs,
           ageMinutes,
           priceUsd,
           liquidityUsd: reserveUsd,
+          fdvUsd: fdvUsd > 0 ? fdvUsd : reserveUsd * 4,
+          volume5m,
+          volume1h,
+          buys5m,
+          sells5m,
           source: 'geckoterminal',
         });
       }

@@ -99,4 +99,66 @@ describe('NewPoolsScanner', () => {
     const secondRun = await scanner.scanNewPools(8453);
     expect(secondRun.length).toBe(0);
   });
+
+  it('filters out Uniswap V4 pools and inactive 1-transaction pools', async () => {
+    const now = Date.now();
+    (axios.get as any).mockResolvedValue({
+      data: {
+        data: [
+          {
+            id: 'base_0xv4',
+            attributes: {
+              address: '0xpool_v4',
+              pool_created_at: new Date(now - 5 * 60 * 1000).toISOString(),
+              reserve_in_usd: '25000',
+              base_token_price_usd: '0.00002',
+              name: 'V4Token / WETH',
+            },
+            relationships: {
+              base_token: { data: { id: 'base_0xtoken_v4' } },
+              dex: { data: { id: 'uniswap-v4-base' } },
+            },
+          },
+          {
+            id: 'base_0x1txn',
+            attributes: {
+              address: '0xpool_1txn',
+              pool_created_at: new Date(now - 5 * 60 * 1000).toISOString(),
+              reserve_in_usd: '50000',
+              base_token_price_usd: '0.01',
+              name: 'DeadToken / WETH',
+              transactions: { m5: { buys: 1, sells: 0 } },
+              volume_usd: { m5: '0' },
+            },
+            relationships: {
+              base_token: { data: { id: 'base_0xtoken_1txn' } },
+              dex: { data: { id: 'aerodrome-base' } },
+            },
+          },
+          {
+            id: 'base_0xvalid',
+            attributes: {
+              address: '0xpool_valid',
+              pool_created_at: new Date(now - 5 * 60 * 1000).toISOString(),
+              reserve_in_usd: '15000',
+              base_token_price_usd: '0.1',
+              name: 'GoodToken / WETH',
+              transactions: { m5: { buys: 8, sells: 2 } },
+              volume_usd: { m5: '1200' },
+            },
+            relationships: {
+              base_token: { data: { id: 'base_0xtoken_good' } },
+              dex: { data: { id: 'aerodrome-base' } },
+            },
+          },
+        ],
+      },
+    });
+
+    const candidates = await scanner.scanNewPools(8453);
+    // V4 and 1-txn should be filtered out, only GoodToken accepted
+    expect(candidates.length).toBe(1);
+    expect(candidates[0].tokenSymbol).toBe('GoodToken');
+    expect(candidates[0].buys5m).toBe(8);
+  });
 });

@@ -37,9 +37,26 @@ export class PositionTracker {
   public async openPosition(pos: Position): Promise<Position> {
     pos.highestPriceSeen = pos.entryPriceUsd;
     this.storage.update((data) => {
-      data.positions.push(pos);
+      // Defensive duplicate check: do not push if token is already open
+      const isAlreadyOpen = data.positions.some(
+        (p: Position) => p.status === 'OPEN' && p.tokenAddress.toLowerCase() === pos.tokenAddress.toLowerCase()
+      );
+      if (!isAlreadyOpen) {
+        data.positions.push(pos);
+      }
     });
     return pos;
+  }
+
+  public async hasOpenPositionForToken(tokenAddress: string): Promise<boolean> {
+    const active = await this.getActivePositions();
+    const normalized = tokenAddress.toLowerCase();
+    return active.some((p) => p.tokenAddress.toLowerCase() === normalized);
+  }
+
+  public async getActivePositionsCount(chainId?: number): Promise<number> {
+    const active = await this.getActivePositions(chainId);
+    return active.length;
   }
 
   public async getActivePositions(chainId?: number): Promise<Position[]> {

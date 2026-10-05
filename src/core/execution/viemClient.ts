@@ -13,10 +13,14 @@ export const robinhoodChain = defineChain({
   },
   rpcUrls: {
     default: {
-      http: ['https://rpc.robinhoodchain.com'],
+      http: ['https://rpc.mainnet.chain.robinhood.com'],
     },
     public: {
-      http: ['https://rpc.robinhoodchain.com'],
+      http: [
+        'https://rpc.mainnet.chain.robinhood.com',
+        'https://robinhood-rpc.publicnode.com',
+        'https://robinhood.drpc.org',
+      ],
     },
   },
   blockExplorers: {

@@ -2,6 +2,7 @@ import { parseEther, parseAbi, encodeFunctionData, maxUint256 } from 'viem';
 import { ViemClientManager } from '../viemClient.js';
 import { BuyOrderParams, BuyResult, SellResult } from '../types.js';
 import { Position } from '../../positions/tracker.js';
+import { rateService } from '../../services/rateService.js';
 
 const ROUTER_ABI = parseAbi([
   'function swapExactETHForTokensSupportingFeeOnTransferTokens(uint amountOutMin, address[] calldata path, address to, uint deadline) external payable',
@@ -68,7 +69,8 @@ export class BaseRouterExecutor {
       return {
         success: true,
         txHash,
-        amountTokens: (order.amountEth * 2500) / order.currentPriceUsd,
+        // BUG-07 FIX: Use real-time ETH price instead of hardcoded $2500
+        amountTokens: (order.amountEth * rateService.getEthPriceUsd()) / order.currentPriceUsd,
         filledPriceUsd: order.currentPriceUsd,
       };
     } catch (err) {

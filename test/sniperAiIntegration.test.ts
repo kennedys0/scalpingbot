@@ -27,6 +27,9 @@ describe('New Token Auto-Sniper with AI Pre-Veto Gate', () => {
         ageMinutes: 1,
         priceUsd: 0.01,
         liquidityUsd: 10000,
+        buys5m: 5,
+        sells5m: 1,
+        volume5m: 500,
         source: 'geckoterminal',
       },
     ]);
@@ -72,6 +75,9 @@ describe('New Token Auto-Sniper with AI Pre-Veto Gate', () => {
         ageMinutes: 2,
         priceUsd: 0.05,
         liquidityUsd: 25000,
+        buys5m: 10,
+        sells5m: 2,
+        volume5m: 2000,
         source: 'geckoterminal',
       },
     ]);
@@ -154,5 +160,55 @@ describe('New Token Auto-Sniper with AI Pre-Veto Gate', () => {
       'EMERGENCY_DUMP_EXIT',
       0.048
     );
+  });
+
+  it('rejects candidate when phantom liquidity trap is detected (real quote reserve < $1500)', async () => {
+    vi.spyOn(orchestrator['newTokenScanner'], 'scanNewPools').mockResolvedValue([
+      {
+        chainId: 8453,
+        poolAddress: '0xpool_trap',
+        baseTokenAddress: '0xtrap_token',
+        tokenSymbol: 'TRAP',
+        tokenName: 'Trap Token',
+        createdAtMs: Date.now() - 60000,
+        ageMinutes: 1,
+        priceUsd: 0.000025,
+        liquidityUsd: 25000, // Fake reported liquidity
+        realQuoteReserveUsd: 0.05, // Only 0.000019 ETH (<$1 real reserve)
+        source: 'geckoterminal',
+      },
+    ]);
+
+    const snipeSpy = vi.spyOn(orchestrator['sniper'], 'executeSnipe');
+    const result = await orchestrator.evaluateAndSnipeNewPools(8453);
+
+    expect(result.snipedCount).toBe(0);
+    expect(snipeSpy).not.toHaveBeenCalled();
+    expect(orchestrator['blacklist'].isBlacklisted('0xtrap_token')).toBe(true);
+  });
+
+  it('rejects candidate when pool is on unsupported Uniswap V4', async () => {
+    vi.spyOn(orchestrator['newTokenScanner'], 'scanNewPools').mockResolvedValue([
+      {
+        chainId: 8453,
+        poolAddress: '0xpool_v4',
+        baseTokenAddress: '0xv4_token',
+        tokenSymbol: 'V4TOK',
+        tokenName: 'V4 Token',
+        dexId: 'uniswap-v4-base',
+        createdAtMs: Date.now() - 60000,
+        ageMinutes: 1,
+        priceUsd: 0.01,
+        liquidityUsd: 50000,
+        source: 'geckoterminal',
+      },
+    ]);
+
+    const snipeSpy = vi.spyOn(orchestrator['sniper'], 'executeSnipe');
+    const result = await orchestrator.evaluateAndSnipeNewPools(8453);
+
+    expect(result.snipedCount).toBe(0);
+    expect(snipeSpy).not.toHaveBeenCalled();
+    expect(orchestrator['blacklist'].isBlacklisted('0xv4_token')).toBe(true);
   });
 });

@@ -7,6 +7,8 @@ export interface AiClientConfig {
   baseUrl?: string;
   model?: string;
   chainId: number;
+  role?: 'hunter' | 'auditor';
+  timeoutMs?: number;
 }
 
 export class AiScalpEngine {
@@ -14,12 +16,16 @@ export class AiScalpEngine {
   private baseUrl: string;
   private model: string;
   private chainId: number;
+  private timeoutMs: number;
+  public role: 'hunter' | 'auditor';
 
   constructor(config: AiClientConfig) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl || 'https://openrouter.ai/api/v1';
     this.model = config.model || (config.chainId === 8453 ? 'deepseek/deepseek-chat' : 'anthropic/claude-3.5-sonnet');
     this.chainId = config.chainId;
+    this.role = config.role || 'auditor';
+    this.timeoutMs = config.timeoutMs || 35000;
   }
 
   protected async callLlmApi(systemPrompt: string, userPrompt: string): Promise<string> {
@@ -45,7 +51,7 @@ export class AiScalpEngine {
           'HTTP-Referer': 'https://github.com/scalping-bot',
           'X-Title': 'MultiChain AIScalper',
         },
-        timeout: 15000,
+        timeout: this.timeoutMs,
       }
     );
 
@@ -57,10 +63,11 @@ export class AiScalpEngine {
     return content;
   }
 
-  public async evaluateToken(input: ScalpCandidateInput): Promise<AiScalpDecision> {
+  public async evaluateToken(input: ScalpCandidateInput, roleOverride?: 'hunter' | 'auditor'): Promise<AiScalpDecision> {
+    const activeRole = roleOverride || this.role;
     try {
-      const systemPrompt = buildScalpSystemPrompt(this.chainId);
-      const userPrompt = buildScalpUserPrompt(input);
+      const systemPrompt = buildScalpSystemPrompt(this.chainId, activeRole);
+      const userPrompt = buildScalpUserPrompt(input, activeRole);
 
       const rawLlmResponse = await this.callLlmApi(systemPrompt, userPrompt);
       return parseAiResponse(rawLlmResponse);

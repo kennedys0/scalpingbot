@@ -13,10 +13,17 @@ export interface TelegramBotContext {
   setTradingMode: (mode: 'paper' | 'live' | 'shadow') => void;
   setStrategyMode?: (mode: 'rules_only' | 'ai_veto' | 'dual_agent') => void;
   closeAllPositions: () => Promise<number>;
+  closePosition?: (positionId: string) => Promise<{
+    success: boolean;
+    realizedPnlPct?: number;
+    realizedPnlEth?: number;
+    closePriceUsd?: number;
+  }>;
   getActivePositions: () => Promise<any[]>;
   sniper: InstantSniper;
   blacklistManager: any;
   getRecentActivities?: () => any[];
+  getSettings?: () => any;
 }
 
 export function createTelegramBot(ctx: TelegramBotContext): Bot {

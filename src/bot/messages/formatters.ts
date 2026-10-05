@@ -96,7 +96,7 @@ export interface TradeSignalCardData {
 
 export function formatTradeSignalCard(card: TradeSignalCardData): string {
   const shortCA = `${card.tokenAddress.substring(0, 6)}...${card.tokenAddress.substring(card.tokenAddress.length - 4)}`;
-  const signalsList = card.signalsDetected.map((s) => `• ${escapeHtml(s)}`).join('\n');
+  const signalsList = (card.signalsDetected || []).map((s) => `• ${escapeHtml(s)}`).join('\n');
   const safeSymbol = escapeHtml(card.tokenSymbol);
   const safeReasoning = escapeHtml(card.reasoning);
 
@@ -159,7 +159,7 @@ export function formatNewTokenSnipeCard(data: NewTokenSnipeCardData): string {
 <b>Take Profit:</b> +${data.takeProfitPct.toFixed(1)}% (${formatPriceWithIdr(tpPrice)})
 <b>Stop Loss:</b> -${data.stopLossPct.toFixed(1)}% (${formatPriceWithIdr(slPrice)})
 <b>AI Confidence:</b> 🎯 <code>${data.aiConfidence}%</code>
-<b>AI Auditor Verdict:</b>
+<b>🛡️ Catatan Audit AI Auditor:</b>
 <i>"${safeReasoning}"</i>
 ────────────────────────
 <i>Posisi dipantau oleh AI Sentinel & Trailing Stop.</i>`;
@@ -303,12 +303,12 @@ export function formatAiDebateCard(data: AiDebateCardData): string {
 • Stance: ${hunterEmoji} <b>${data.hunterDecision.action}</b> (Confidence: <b>${data.hunterDecision.confidence}%</b>)${hunterTargetLine}
 • Reasoning: <i>"${escapeHtml(data.hunterDecision.reasoning || 'No details')}"</i>
 
-🛡️ <b>Auditor Agent (Bear Risk):</b>
-• Stance: ${auditorEmoji} <b>${data.auditorDecision.action}</b> (Confidence: <b>${data.auditorDecision.confidence}%</b>)${auditorTargetLine}
-• Audit Note: <i>"${escapeHtml(data.auditorDecision.reasoning || 'No details')}"</i>
+🛡️ <b>Auditor Agent (Audit Risiko):</b>
+• Sikap: ${auditorEmoji} <b>${data.auditorDecision.action}</b> (Tingkat Keyakinan: <b>${data.auditorDecision.confidence}%</b>)${auditorTargetLine}
+• Catatan Audit: <i>"${escapeHtml(data.auditorDecision.reasoning || 'Tidak ada catatan')}"</i>
 
-⚖️ <b>Debate Consensus Verdict:</b>
-• Outcome: ${statusEmoji} <b>${consensusText}</b> (Consensus Score: <b>${data.consensus.consensusScore}%</b>)
+⚖️ <b>Hasil Konsensus AI:</b>
+• Keputusan: ${statusEmoji} <b>${consensusText}</b> (Skor Konsensus: <b>${data.consensus.consensusScore}%</b>)
 ${isAgreed ? `• Agreed Setup: TP <code>+${data.consensus.takeProfitPct}%</code> | SL <code>-${data.consensus.stopLossPct}%</code>\n• Status: <i>Maju ke evaluasi Risk Engine Expected Value (EV)...</i>` : `• Status: <i>Dibatalkan. Token masuk temporary blacklist cooldown.</i>`}
 ────────────────────────`;
 }
@@ -347,6 +347,142 @@ ${data.reason ? `• Catatan: <i>${escapeHtml(data.reason)}</i>\n` : ''}──�
 ${data.reason ? `• Reason: <i>${escapeHtml(data.reason)}</i>\n` : ''}────────────────────────`;
 }
 
+export interface DepositNotificationData {
+  chainName: 'Base' | 'Robinhood' | string;
+  chainId: 8453 | 4663 | number;
+  amountEth: number;
+  amountUsd: number;
+  amountIdr: number;
+  newBalanceEth: number;
+  address: string;
+}
+
+export function formatDepositNotificationCard(deposit: DepositNotificationData): string {
+  const chainEmoji = deposit.chainId === 8453 ? '🔵' : '🏹';
+  const ethFmt = deposit.amountEth.toFixed(6);
+  const idrFmt = Math.round(deposit.amountIdr).toLocaleString('id-ID');
+  const usdFmt = deposit.amountUsd.toFixed(2);
+  const newBalFmt = deposit.newBalanceEth.toFixed(6);
+  const shortAddr = `${deposit.address.substring(0, 8)}...${deposit.address.substring(deposit.address.length - 6)}`;
+
+  return `💰 <b>[SALDO MASUK / DEPOSIT TERDETEKSI]</b>
+────────────────────────
+${chainEmoji} <b>Network:</b> ${escapeHtml(deposit.chainName)} Chain
+📥 <b>Jumlah Masuk:</b> <b>+${ethFmt} ETH</b> (~$${usdFmt} / ~Rp ${idrFmt})
+💳 <b>Saldo Baru di ${escapeHtml(deposit.chainName)}:</b> <code>${newBalFmt} ETH</code>
+📋 <b>Alamat Wallet:</b> <code>${shortAddr}</code>
+────────────────────────
+<i>Saldo telah berhasil masuk ke wallet scalper Anda dan siap ditradingkan!</i>`;
+}
+
+export interface WalletCardData {
+  address: string;
+  balanceBaseEth?: number;
+  balanceRobinhoodEth?: number;
+  balanceTotalEth?: number;
+  balanceEth: number;
+  balanceUsd: number;
+  balanceIdr: number;
+  pnl24hEth: number;
+  pnl24hIdr: number;
+  pnl24hPct: number;
+  snapshotCount: number;
+  lastUpdated: number;
+}
+
+export function formatWalletCard(data: WalletCardData): string {
+  const rates = rateService.getRates();
+  const sourceLabel = rates.source === 'coingecko' ? '🟢 Real-Time' : '🟡 Fallback';
+  const shortAddr = `${data.address.substring(0, 8)}...${data.address.substring(data.address.length - 6)}`;
+
+  const totalEth = data.balanceTotalEth ?? data.balanceEth;
+  const baseEth = data.balanceBaseEth ?? (data.balanceRobinhoodEth !== undefined ? totalEth - data.balanceRobinhoodEth : totalEth);
+  const rhEth = data.balanceRobinhoodEth ?? 0;
+
+  const balanceEthFmt = totalEth.toFixed(6);
+  const balanceUsdFmt = data.balanceUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const balanceIdrFmt = Math.round(data.balanceIdr).toLocaleString('id-ID');
+
+  const baseEthFmt = baseEth.toFixed(6);
+  const baseIdrFmt = Math.round(baseEth * rates.ethPriceIdr).toLocaleString('id-ID');
+  const rhEthFmt = rhEth.toFixed(6);
+  const rhIdrFmt = Math.round(rhEth * rates.ethPriceIdr).toLocaleString('id-ID');
+
+  const pnlSign = data.pnl24hEth >= 0 ? '+' : '';
+  const pnlEmoji = data.pnl24hEth >= 0 ? '📈' : '📉';
+  const pnlPctSign = data.pnl24hPct >= 0 ? '+' : '';
+  const pnlIdrSign = data.pnl24hIdr >= 0 ? '+' : '-';
+  const pnlIdrFmt = Math.abs(Math.round(data.pnl24hIdr)).toLocaleString('id-ID');
+  const historyLabel = data.snapshotCount <= 1 ? '<i>Mulai terlacak sekarang</i>' : `${data.snapshotCount} titik data`;
+
+  const updatedTime = new Date(data.lastUpdated);
+  const timeStr = `${updatedTime.getHours().toString().padStart(2, '0')}:${updatedTime.getMinutes().toString().padStart(2, '0')}:${updatedTime.getSeconds().toString().padStart(2, '0')}`;
+
+  return `💼 <b>WALLET OVERVIEW</b>
+────────────────────────
+<b>Alamat:</b> <code>${shortAddr}</code>
+<b>Networks:</b> Base (8453) & Robinhood (4663)
+
+💰 <b>Rincian Saldo Multi-Chain:</b>
+• 🔵 <b>Base Chain:</b> <code>${baseEthFmt} ETH</code> (~Rp ${baseIdrFmt})
+• 🏹 <b>Robinhood:</b> <code>${rhEthFmt} ETH</code> (~Rp ${rhIdrFmt})
+• 💎 <b>Total Saldo:</b> <code>${balanceEthFmt} ETH</code> (~$${balanceUsdFmt} / ~Rp ${balanceIdrFmt})
+
+${pnlEmoji} <b>Perubahan 24 Jam:</b>
+• PnL ETH: <code>${pnlSign}${data.pnl24hEth.toFixed(6)} ETH</code>
+• PnL IDR: <code>${pnlIdrSign}Rp ${pnlIdrFmt}</code>
+• PnL %: <b>${pnlPctSign}${data.pnl24hPct.toFixed(2)}%</b>
+• Riwayat: ${historyLabel}
+
+📊 <b>Kurs Live (${sourceLabel}):</b>
+• 1 ETH = $${rates.ethPriceUsd.toLocaleString('en-US')} (~Rp ${rates.ethPriceIdr.toLocaleString('id-ID')})
+• 1 USD = Rp ${rates.usdToIdrRate.toLocaleString('id-ID')}
+────────────────────────
+<i>Diperbarui: ${timeStr}</i>`;
+}
+
+export function formatDepositCard(address: string): string {
+  const shortAddr = `${address.substring(0, 10)}...${address.substring(address.length - 8)}`;
+  return `📥 <b>DEPOSIT ETH KE WALLET</b>
+────────────────────────
+🔵 <b>Network 1:</b> Base Chain (Base Mainnet)
+🏹 <b>Network 2:</b> Robinhood Chain
+⚠️ <b>Kirim ETH di jaringan Base (8453) atau Robinhood (4663)!</b>
+
+📋 <b>Alamat Wallet:</b>
+<code>${address}</code>
+
+Scan QR Code di bawah atau salin alamat di atas untuk melakukan deposit.
+<i>Alamat: ${shortAddr}</i>
+────────────────────────
+<i>💡 Tip: Bot scalper mendukung trading dan membaca saldo di kedua jaringan.</i>`;
+}
+
+export function formatWithdrawGuide(address: string, balanceEth: number): string {
+  const rates = rateService.getRates();
+  const balanceIdr = Math.round(balanceEth * rates.ethPriceIdr).toLocaleString('id-ID');
+  const balanceUsd = (balanceEth * rates.ethPriceUsd).toFixed(2);
+  return `📤 <b>WITHDRAW / KIRIM ETH</b>
+────────────────────────
+<b>Wallet Aktif:</b> <code>${address.substring(0, 8)}...${address.substring(address.length - 6)}</code>
+<b>Saldo Tersedia:</b>
+• <code>${balanceEth.toFixed(6)} ETH</code>
+• <b>~$${balanceUsd} (~Rp ${balanceIdr})</b>
+
+🔧 <b>Cara Withdraw:</b>
+Kirim perintah berikut ke bot:
+<code>/withdraw &lt;alamat_tujuan&gt; &lt;jumlah_eth&gt;</code>
+
+<b>Contoh:</b>
+<code>/withdraw 0xAbCd...1234 0.05</code>
+
+⚠️ <b>Perhatian:</b>
+• Cek ulang alamat tujuan sebelum kirim
+• Gas fee Base Chain biasanya &lt; $0.01
+• Transaksi tidak bisa dibatalkan!
+────────────────────────`;
+}
+
 export function formatLiveFeedSummary(activities: any[]): string {
   if (!activities || activities.length === 0) {
     return `📡 <b>LIVE AI ACTIVITY FEED</b>\n────────────────────────\nBelum ada riwayat aktivitas terbaru. Scanner sedang aktif memantau jaringan.`;
@@ -366,3 +502,90 @@ ${items}
 ────────────────────────
 <i>Gunakan /menu untuk kembali ke dashboard utama.</i>`;
 }
+
+export interface ActivePositionDisplayItem {
+  id: string;
+  chainId: number;
+  tokenAddress: string;
+  tokenSymbol: string;
+  mode: string;
+  entryPriceUsd: number;
+  currentPriceUsd: number;
+  costEth: number;
+  takeProfitPct: number;
+  stopLossPct: number;
+  trailingStopPct?: number;
+  highestPriceSeen?: number;
+  openedAt: number;
+}
+
+export function getDexScreenerUrl(chainId: number, tokenAddress: string): string {
+  if (chainId === 8453) {
+    return `https://dexscreener.com/base/${tokenAddress}`;
+  }
+  return `https://dexscreener.com/search?q=${encodeURIComponent(tokenAddress)}`;
+}
+
+export function getGeckoTerminalUrl(chainId: number, tokenAddress: string): string {
+  const network = chainId === 8453 ? 'base' : 'robinhood';
+  return `https://www.geckoterminal.com/${network}/tokens/${tokenAddress}`;
+}
+
+export function formatActivePositionsCard(
+  positions: ActivePositionDisplayItem[],
+  maxPositions: number = 3
+): string {
+  if (positions.length === 0) {
+    return `📊 <b>ACTIVE POSITIONS (0/${maxPositions})</b>
+────────────────────────
+<i>Tidak ada posisi scalping aktif saat ini.</i>
+
+🟢 <b>Status:</b> Bot siap dan sedang memindai peluang entry dengan Expected Value &gt; +1.5%...`;
+  }
+
+  const ethPriceIdr = rateService.getEthPriceIdr();
+  let text = `📊 <b>ACTIVE POSITIONS (${positions.length}/${maxPositions})</b>\n`;
+  if (positions.length >= maxPositions) {
+    text += `⚠️ <b>BATAS MAKSIMAL TERCAPAI (${positions.length}/${maxPositions})</b>\n<i>Pencarian token dijeda sementara sampai posisi ditutup (TP/SL).</i>\n`;
+  } else {
+    text += `<i>Slot tersedia: ${maxPositions - positions.length} posisi lagi</i>\n`;
+  }
+  text += `────────────────────────\n\n`;
+
+  for (const pos of positions) {
+    const chainName = pos.chainId === 8453 ? 'Base' : 'Robinhood';
+    const currentPrice = pos.currentPriceUsd > 0 ? pos.currentPriceUsd : pos.entryPriceUsd;
+    const pnlPct = ((currentPrice - pos.entryPriceUsd) / pos.entryPriceUsd) * 100;
+    const isProfit = pnlPct >= 0;
+    const pnlEmoji = isProfit ? '🟢' : '🔴';
+    const sign = isProfit ? '+' : '';
+    const pnlEth = pos.costEth * (pnlPct / 100);
+    const pnlIdr = Math.round(pnlEth * ethPriceIdr);
+    const pnlIdrSign = pnlIdr >= 0 ? '+' : '-';
+    const idrFormatted = `~${pnlIdrSign}Rp ${Math.abs(pnlIdr).toLocaleString('id-ID')}`;
+
+    const tpPrice = pos.entryPriceUsd * (1 + pos.takeProfitPct / 100);
+    const slPrice = pos.entryPriceUsd * (1 - pos.stopLossPct / 100);
+    const ageMinutes = Math.max(1, Math.round((Date.now() - (pos.openedAt || Date.now())) / 60000));
+    const modeBadge = pos.mode === 'live' ? '⚡ LIVE' : '📝 PAPER';
+    const dexUrl = getDexScreenerUrl(pos.chainId, pos.tokenAddress);
+
+    text += `${pnlEmoji} <a href="${dexUrl}"><b>$${escapeHtml(pos.tokenSymbol)}</b></a> (<code>${escapeHtml(chainName)}</code> | ${modeBadge})\n`;
+    text += `• <b>Harga Real-Time:</b> <code>${formatPriceWithIdr(currentPrice)}</code> ⏱️\n`;
+    text += `• <b>Entry:</b> <code>${formatPriceWithIdr(pos.entryPriceUsd)}</code>\n`;
+    text += `• <b>Floating PnL:</b> ${pnlEmoji} <b>${sign}${pnlPct.toFixed(2)}%</b> (${sign}${pnlEth.toFixed(5)} ETH / ${idrFormatted})\n`;
+    text += `• <b>Target TP:</b> +${pos.takeProfitPct.toFixed(1)}% (${formatPriceWithIdr(tpPrice)})\n`;
+    text += `• <b>Stop Loss:</b> -${pos.stopLossPct.toFixed(1)}% (${formatPriceWithIdr(slPrice)})\n`;
+    if (pos.highestPriceSeen && pos.highestPriceSeen > pos.entryPriceUsd) {
+      text += `• <b>Peak Tertinggi:</b> ${formatPriceWithIdr(pos.highestPriceSeen)} (Trailing: ${pos.trailingStopPct ?? 3}%)\n`;
+    }
+    text += `• <b>Modal:</b> ${formatEthWithIdr(pos.costEth)} | <i>${ageMinutes}m lalu</i>\n`;
+    text += `• <b>DexScreener:</b> <a href="${dexUrl}">📈 Buka Chart DexScreener</a>\n\n`;
+  }
+
+  const nowStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  text += `────────────────────────\n`;
+  text += `⏱️ <i>Harga live real-time diperiksa: ${nowStr} WIB</i>`;
+  return text;
+}
+

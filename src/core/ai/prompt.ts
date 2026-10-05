@@ -3,7 +3,52 @@ import { LIQUIDITY_KNOWLEDGE } from './knowledge/liquidity.js';
 import { CHAIN_SPECIFIC_KNOWLEDGE } from './knowledge/chains.js';
 import { MicrostructureMetrics } from '../scanner/metrics.js';
 
-export function buildScalpSystemPrompt(chainId: number): string {
+export function buildAuditorSystemPrompt(chainId: number): string {
+  const chainName = chainId === 8453 ? 'Base' : 'Robinhood';
+  const specificKnowledge = chainId === 8453 ? CHAIN_SPECIFIC_KNOWLEDGE.base : CHAIN_SPECIFIC_KNOWLEDGE.robinhood;
+
+  return `Kamu adalah Auditor Risiko Kripto & Spesialis Keamanan Mikrostruktur DEX (Crypto Risk Auditor & Microstructure Security Specialist) pada jaringan ${chainName}.
+
+PERAN & TUGAS UTAMA:
+1. Perlindungan Modal (Capital Preservation) adalah Prioritas #1 Mutlak.
+2. Bertindaklah sebagai Risk Auditor yang kritis, skeptis, dan waspada terhadap segala bentuk jebakan likuiditas, dump tersembunyi oleh dev/insider, manipulasi volume (wash trading), dan potensi rug pull/honeypot.
+3. Berikan rekomendasi tindakan:
+   - "BUY": Hanya jika data order flow murni akumulasi sehat, buy pressure stabil (>= 60%), likuiditas aman, dan rasio Risk/Reward >= 2.0.
+   - "WAIT": Jika momentum belum jelas atau volatilitas membahayakan tanpa arah yang pasti.
+   - "AVOID": Jika terdeteksi distribusi paus/dev, tekanan jual mendominasi, likuiditas tipis/tidak seimbang, atau risiko dump tinggi.
+
+BASIS PENGETAHUAN AUDITOR:
+${ORDER_FLOW_KNOWLEDGE}
+
+${LIQUIDITY_KNOWLEDGE}
+
+${specificKnowledge}
+
+ATURAN BAHASA (LANGUAGE REQUIREMENT - WAJIB BAHASA INDONESIA):
+- Field "reasoning" WAJIB ditulis dalam Bahasa Indonesia yang profesional, analitis, padat, dan jelas mengenai analisa risiko atau potensi keuntungan scalping.
+- Field "signalsDetected" WAJIB berisi poin-poin sinyal kunci dalam Bahasa Indonesia (contoh: ["Tekanan Beli Kuat", "Akumulasi Sehat", "Likuiditas Memadai", "Risiko Dump Rendah"]).
+
+FORMAT OUTPUT:
+Kamu WAJIB mengeluarkan output HANYA RAW JSON valid tanpa markdown atau teks pengantar lainnya:
+{
+  "action": "BUY" | "WAIT" | "AVOID",
+  "confidence": number (0 sampai 100),
+  "takeProfitPct": number (0 jika WAIT/AVOID, atau target profit % jika BUY),
+  "stopLossPct": number (0 jika WAIT/AVOID, atau batas risiko % jika BUY),
+  "suggestedAllocEth": number (0 jika WAIT/AVOID, atau ukuran posisi dalam ETH jika BUY),
+  "timeframeMinutes": number (0 jika WAIT/AVOID, atau estimasi durasi hold menit jika BUY),
+  "riskRewardRatio": number (0 jika WAIT/AVOID, atau rasio jika BUY),
+  "reasoning": string (Wajib dalam Bahasa Indonesia: penjelasan rinci hasil audit risiko dan kondisi order flow),
+  "signalsDetected": string[] (Wajib dalam Bahasa Indonesia: daftar sinyal mikrostruktur kunci)
+}
+`;
+}
+
+export function buildScalpSystemPrompt(chainId: number, role: 'hunter' | 'auditor' = 'hunter'): string {
+  if (role === 'auditor') {
+    return buildAuditorSystemPrompt(chainId);
+  }
+
   const chainName = chainId === 8453 ? 'Base' : 'Robinhood';
   const specificKnowledge = chainId === 8453 ? CHAIN_SPECIFIC_KNOWLEDGE.base : CHAIN_SPECIFIC_KNOWLEDGE.robinhood;
 
@@ -31,12 +76,12 @@ JSON Schema format:
 {
   "action": "BUY" | "WAIT" | "AVOID",
   "confidence": number (0 to 100),
-  "takeProfitPct": number,
-  "stopLossPct": number,
-  "suggestedAllocEth": number,
-  "timeframeMinutes": number,
-  "riskRewardRatio": number,
-  "reasoning": string (concise explanation of signals),
+  "takeProfitPct": number (0 if WAIT/AVOID, or expected gain % if BUY),
+  "stopLossPct": number (0 if WAIT/AVOID, or risk % if BUY),
+  "suggestedAllocEth": number (0 if WAIT/AVOID, or suggested size in ETH if BUY),
+  "timeframeMinutes": number (0 if WAIT/AVOID, or expected hold time in minutes if BUY),
+  "riskRewardRatio": number (0 if WAIT/AVOID, or ratio if BUY),
+  "reasoning": string (concise explanation of signals and risk evaluation),
   "signalsDetected": string[]
 }
 `;
@@ -58,13 +103,18 @@ function sanitizeString(str: string, maxLength: number = 32): string {
   return str.replace(/[\r\n\t"'{}\[\]\\]/g, '').substring(0, maxLength).trim();
 }
 
-export function buildScalpUserPrompt(input: ScalpCandidateInput): string {
+export function buildScalpUserPrompt(input: ScalpCandidateInput, role: 'hunter' | 'auditor' = 'auditor'): string {
   const m = input.metrics;
   const memoryBlock = input.pastLessons ? `\n\n${input.pastLessons}` : '';
   const smartMoneyBlock = input.smartMoneyInfo ? `\n\nSmart Money Whale Alert:\n- ${input.smartMoneyInfo}` : '';
 
   const safeName = sanitizeString(input.tokenName, 32);
   const safeSymbol = sanitizeString(input.tokenSymbol, 16);
+
+  const instructions =
+    role === 'auditor'
+      ? 'Lakukan audit risiko mikrostruktur order flow dan likuiditas untuk pair ini. Kemukakan reasoning dan signalsDetected dalam Bahasa Indonesia secara mendalam dan padat, lalu kembalikan HANYA format JSON valid sesuai skema.'
+      : 'Perform step-by-step reasoning internally, then return ONLY the JSON evaluation output.';
 
   return `Analyze this live DEX pair for a potential rapid scalp entry:
 
@@ -87,5 +137,5 @@ Pre-Calculated Quantitative Metrics:
 - Order Flow Bullish Signal: ${m?.isOrderFlowBullish ? 'YES' : 'NO'}
 - Volatility Score: ${m?.volatilityScore ?? 0} / 100${memoryBlock}${smartMoneyBlock}
 
-Perform step-by-step reasoning internally, then return ONLY the JSON evaluation output.`;
+${instructions}`;
 }

@@ -113,7 +113,9 @@ export class ExecutionEngine {
     currentPriceUsd: number,
     pctToSell: number = 50
   ): Promise<SellResult> {
-    if (this.mode === 'paper' || this.mode === 'shadow') {
+    // BUG-05 FIX: Use position.mode (stored at open time) not this.mode (current engine mode)
+    // This prevents paper positions from being routed to live on-chain executors when mode switches
+    if (position.mode === 'paper' || position.mode === 'shadow') {
       return await this.paperTrader.simulatePartialSell(
         position,
         currentPriceUsd,

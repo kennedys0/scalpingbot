@@ -25,13 +25,35 @@ export class DexScreenerScanner {
     const chainConfig = getChainConfig(chainId);
     const dexscreenerChain = chainConfig.dexscreenerChainId;
 
-    // Search trending pairs for chain
-    const pairs = await this.fetchFromDexScreener(`/latest/dex/search?q=${dexscreenerChain}`);
+    // Search diverse trending & active ecosystem pools for chain
+    const searchQueries = chainId === 8453
+      ? ['aerodrome', 'base weth', 'uniswap base', 'clanker', 'virtual']
+      : ['uniswap', 'robinhood', 'rh'];
 
-    // Normalize and filter for this chain
-    return pairs
-      .filter((p: any) => p && p.baseToken?.address && (p.chainId === dexscreenerChain || !p.chainId))
-      .map((p: any): DexPairData => ({
+    const rawPairsList: any[] = [];
+    const results = await Promise.all(
+      searchQueries.map((q) => this.fetchFromDexScreener(`/latest/dex/search?q=${encodeURIComponent(q)}`))
+    );
+    for (const list of results) {
+      if (Array.isArray(list)) {
+        rawPairsList.push(...list);
+      }
+    }
+
+    // Deduplicate by token address and filter for target chain
+    const seen = new Set<string>();
+    const filtered = rawPairsList
+      .filter((p: any) => {
+        if (!p || !p.baseToken?.address) return false;
+        if (p.chainId && p.chainId !== dexscreenerChain) return false;
+        const addr = p.baseToken.address.toLowerCase();
+        if (seen.has(addr)) return false;
+        seen.add(addr);
+        return true;
+      })
+      .sort((a: any, b: any) => ((b.volume?.m5 ?? 0) || (b.volume?.h1 ?? 0)) - ((a.volume?.m5 ?? 0) || (a.volume?.h1 ?? 0)));
+
+    return filtered.map((p: any): DexPairData => ({
         pairAddress: p.pairAddress,
         baseToken: {
           address: p.baseToken?.address || '',

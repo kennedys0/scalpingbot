@@ -27,10 +27,10 @@ export class DualAgentDebateEngine {
   }
 
   public async debateToken(input: ScalpCandidateInput): Promise<ConsensusDecision> {
-    // Run both AI evaluations concurrently
+    // Run both AI evaluations concurrently: Hunter (Momentum) vs Auditor (Indonesian Risk Auditor)
     const [hunterVerdict, auditorVerdict] = await Promise.all([
-      this.hunter.evaluateToken(input),
-      this.auditor.evaluateToken(input),
+      this.hunter.evaluateToken(input, 'hunter'),
+      this.auditor.evaluateToken(input, 'auditor'),
     ]);
 
     // Average confidence score

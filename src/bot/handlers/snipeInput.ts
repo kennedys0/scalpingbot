@@ -2,7 +2,7 @@ import { Bot, Context } from 'grammy';
 import { isAddress } from 'viem';
 import { buildSnipeActionKeyboard } from '../keyboards/menus.js';
 import { InstantSniper } from '../../core/sniper/instantSnipe.js';
-import { escapeHtml } from '../messages/formatters.js';
+import { escapeHtml, formatEthWithIdr, formatPriceWithIdr } from '../messages/formatters.js';
 
 export function registerSnipeInput(
   bot: Bot,
@@ -45,8 +45,9 @@ Pilih aksi snipe atau audit AI di bawah ini:`;
     });
 
     if (result.success) {
+      const priceText = result.filledPriceUsd ? formatPriceWithIdr(result.filledPriceUsd) : 'Market';
       await ctx.reply(
-        `✅ <b>SNIPE SUCCESSFUL!</b>\nToken: <code>${tokenAddress}</code>\nAmount: ${amountEth} ETH\nFilled at: $${result.filledPriceUsd}\nTxHash: <code>${result.txHash}</code>`,
+        `✅ <b>SNIPE SUCCESSFUL!</b>\nToken: <code>${tokenAddress}</code>\nAmount: ${formatEthWithIdr(amountEth)}\nFilled at: ${priceText}\nTxHash: <code>${result.txHash}</code>`,
         { parse_mode: 'HTML' }
       );
     } else {

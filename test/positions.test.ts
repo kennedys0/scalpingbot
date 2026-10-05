@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { PositionTracker, Position } from '../src/core/positions/tracker.js';
 import { PositionTicker } from '../src/core/positions/ticker.js';
 import { JsonStorage } from '../src/storage/db.js';
+import { formatActivePositionsCard, getDexScreenerUrl } from '../src/bot/messages/formatters.js';
 
 describe('Position Tracker & Real-Time TP/SL Ticker', () => {
   let tracker: PositionTracker;
@@ -163,5 +164,96 @@ describe('Position Tracker & Real-Time TP/SL Ticker', () => {
       'ANTI_DUMP',
       0.94
     );
+  });
+
+  it('prevents opening duplicate positions for the same token address', async () => {
+    await tracker.openPosition({
+      id: 'pos_dup_1',
+      chainId: 8453,
+      tokenAddress: '0xduplicate_token',
+      tokenSymbol: 'DUP',
+      entryPriceUsd: 1.0,
+      amountTokens: 100,
+      costEth: 0.01,
+      takeProfitPct: 20,
+      stopLossPct: 6,
+      mode: 'paper',
+      status: 'OPEN',
+      openedAt: Date.now(),
+    });
+
+    // Opening another position with the same address (case-insensitive) should be ignored
+    await tracker.openPosition({
+      id: 'pos_dup_2',
+      chainId: 8453,
+      tokenAddress: '0xDUPLICATE_TOKEN',
+      tokenSymbol: 'DUP',
+      entryPriceUsd: 1.05,
+      amountTokens: 100,
+      costEth: 0.01,
+      takeProfitPct: 20,
+      stopLossPct: 6,
+      mode: 'paper',
+      status: 'OPEN',
+      openedAt: Date.now(),
+    });
+
+    const active = await tracker.getActivePositions();
+    expect(active.length).toBe(1);
+    expect(await tracker.hasOpenPositionForToken('0xduplicate_token')).toBe(true);
+    expect(await tracker.hasOpenPositionForToken('0xother_token')).toBe(false);
+  });
+
+  it('formats active positions card with real-time live prices and floating PnL', () => {
+    const card = formatActivePositionsCard(
+      [
+        {
+          id: 'pos_card_1',
+          chainId: 8453,
+          tokenAddress: '0x123',
+          tokenSymbol: 'WINNER',
+          mode: 'paper',
+          entryPriceUsd: 1.0,
+          currentPriceUsd: 1.15, // +15% profit live
+          costEth: 0.02,
+          takeProfitPct: 25,
+          stopLossPct: 8,
+          highestPriceSeen: 1.15,
+          openedAt: Date.now() - 300000,
+        },
+      ],
+      3
+    );
+
+    expect(card).toContain('ACTIVE POSITIONS (1/3)');
+    expect(card).toContain('WINNER');
+    expect(card).toContain('+15.00%');
+    expect(card).toContain('Harga Real-Time');
+    expect(card).toContain('Slot tersedia: 2 posisi lagi');
+    expect(card).toContain('https://dexscreener.com/base/0x123');
+    expect(card).toContain('📈 Buka Chart DexScreener');
+  });
+
+  it('generates correct DexScreener URL for different networks', () => {
+    expect(getDexScreenerUrl(8453, '0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed')).toBe(
+      'https://dexscreener.com/base/0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed'
+    );
+    expect(getDexScreenerUrl(4663, '0xCustomToken')).toBe(
+      'https://dexscreener.com/search?q=0xCustomToken'
+    );
+  });
+
+  it('indicates limit reached when active positions hit max concurrent limit', () => {
+    const card = formatActivePositionsCard(
+      [
+        { id: '1', chainId: 8453, tokenAddress: '0x1', tokenSymbol: 'T1', mode: 'paper', entryPriceUsd: 1, currentPriceUsd: 1, costEth: 0.01, takeProfitPct: 20, stopLossPct: 6, openedAt: Date.now() },
+        { id: '2', chainId: 8453, tokenAddress: '0x2', tokenSymbol: 'T2', mode: 'paper', entryPriceUsd: 1, currentPriceUsd: 1, costEth: 0.01, takeProfitPct: 20, stopLossPct: 6, openedAt: Date.now() },
+        { id: '3', chainId: 8453, tokenAddress: '0x3', tokenSymbol: 'T3', mode: 'paper', entryPriceUsd: 1, currentPriceUsd: 1, costEth: 0.01, takeProfitPct: 20, stopLossPct: 6, openedAt: Date.now() },
+      ],
+      3
+    );
+
+    expect(card).toContain('ACTIVE POSITIONS (3/3)');
+    expect(card).toContain('BATAS MAKSIMAL TERCAPAI (3/3)');
   });
 });

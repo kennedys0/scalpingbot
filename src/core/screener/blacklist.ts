@@ -1,6 +1,12 @@
 import { JsonStorage } from '../../storage/db.js';
 
-export type BlacklistCategory = 'SECURITY_PERMANENT' | 'LOW_LIQUIDITY_TEMP' | 'AI_REJECT_TEMP' | 'MANUAL_USER';
+export type BlacklistCategory =
+  | 'SECURITY_PERMANENT'
+  | 'LOW_LIQUIDITY_TEMP'
+  | 'AI_REJECT_TEMP'
+  | 'MANUAL_USER'
+  | 'UNSUPPORTED_DEX'
+  | 'PHANTOM_LIQUIDITY';
 
 export interface BlacklistEntry {
   address: string;
@@ -62,11 +68,11 @@ export class BlacklistManager {
 
     let ttlHours: number | undefined = customTtlHours;
     if (ttlHours === undefined) {
-      if (category === 'LOW_LIQUIDITY_TEMP') {
+      if (category === 'LOW_LIQUIDITY_TEMP' || category === 'PHANTOM_LIQUIDITY') {
         ttlHours = 6;
       } else if (category === 'AI_REJECT_TEMP') {
         ttlHours = 12;
-      } else if (category === 'SECURITY_PERMANENT') {
+      } else if (category === 'SECURITY_PERMANENT' || category === 'UNSUPPORTED_DEX') {
         ttlHours = undefined;
       }
     }
