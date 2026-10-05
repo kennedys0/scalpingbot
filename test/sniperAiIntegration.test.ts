@@ -116,4 +116,43 @@ describe('New Token Auto-Sniper with AI Pre-Veto Gate', () => {
       })
     );
   });
+
+  it('triggers EMERGENCY_DUMP_EXIT when negative volume delta spikes on a sniper position', async () => {
+    const position = await orchestrator['tracker'].openPosition({
+      id: 'pos_sniper_1',
+      chainId: 8453,
+      tokenAddress: '0xgem_token',
+      tokenSymbol: 'GEM',
+      entryPriceUsd: 0.05,
+      amountTokens: 200,
+      costEth: 0.01,
+      takeProfitPct: 30,
+      stopLossPct: 15,
+      trailingStopPct: 5,
+      mode: 'paper',
+      status: 'OPEN',
+      openedAt: Date.now(),
+      isSniperPosition: true,
+    });
+
+    const exitSpy = vi.fn();
+    (orchestrator['ticker'] as any).onExit = exitSpy;
+
+    // Simulate severe sell delta dump via evaluateSniperSafety
+    const didExit = await orchestrator['ticker'].evaluateSniperSafety(position, {
+      currentPriceUsd: 0.048,
+      buyPressureRatio5m: 0.15,
+      volumeDelta5m: -50000,
+      isEmergencyDump: true,
+    });
+
+    expect(didExit).toBe(true);
+    expect(exitSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: position.id,
+      }),
+      'EMERGENCY_DUMP_EXIT',
+      0.048
+    );
+  });
 });

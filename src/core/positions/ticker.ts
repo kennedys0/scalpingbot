@@ -5,6 +5,7 @@ export type ExitReason =
   | 'STOP_LOSS'
   | 'TRAILING_STOP'
   | 'ANTI_DUMP'
+  | 'EMERGENCY_DUMP_EXIT'
   | 'PANIC_SELL'
   | 'TIME_EXPIRATION';
 
@@ -115,6 +116,27 @@ export class PositionTicker {
         continue;
       }
     }
+  }
+
+  public async evaluateSniperSafety(
+    position: Position,
+    signals: {
+      currentPriceUsd: number;
+      buyPressureRatio5m?: number;
+      volumeDelta5m?: number;
+      isEmergencyDump?: boolean;
+    }
+  ): Promise<boolean> {
+    if (
+      signals.isEmergencyDump ||
+      (signals.buyPressureRatio5m !== undefined && signals.buyPressureRatio5m < 0.20 && (signals.volumeDelta5m ?? 0) < 0)
+    ) {
+      await this.onExit(position, 'EMERGENCY_DUMP_EXIT', signals.currentPriceUsd);
+      this.lastPrices.delete(position.id);
+      this.tickHistories.delete(position.id);
+      return true;
+    }
+    return false;
   }
 
   public start(intervalMs: number = 5000, priceFetcher: () => Promise<Record<string, number>>): void {

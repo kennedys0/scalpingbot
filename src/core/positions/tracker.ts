@@ -16,6 +16,7 @@ export interface Position {
   mode: 'paper' | 'live' | 'shadow';
   strategyMode?: 'rules_only' | 'ai_veto' | 'dual_agent';
   aiScore?: number;
+  isSniperPosition?: boolean;
   status: 'OPEN' | 'CLOSED';
   openedAt: number;
   closedAt?: number;
