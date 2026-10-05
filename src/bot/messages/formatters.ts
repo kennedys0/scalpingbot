@@ -1,3 +1,5 @@
+import { rateService } from '../../core/services/rateService.js';
+
 export function escapeHtml(str: string | undefined | null): string {
   if (!str) return '';
   return str
@@ -5,6 +7,35 @@ export function escapeHtml(str: string | undefined | null): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+export function formatIdrNumber(idr: number): string {
+  const rounded = Math.round(idr);
+  return `Rp ${rounded.toLocaleString('id-ID')}`;
+}
+
+export function formatPriceWithIdr(usd: number): string {
+  const usdToIdr = rateService.getUsdToIdrRate();
+  const idr = usd * usdToIdr;
+  if (usd > 0 && usd < 0.0001) {
+    return `$${usd.toFixed(8)} (~Rp ${idr.toFixed(4).replace('.', ',')})`;
+  }
+  if (usd > 0 && usd < 0.01) {
+    return `$${usd.toFixed(6)} (~Rp ${idr.toFixed(2).replace('.', ',')})`;
+  }
+  if (usd > 0 && usd < 1) {
+    return `$${usd.toFixed(4)} (~${formatIdrNumber(idr)})`;
+  }
+  return `$${usd.toFixed(2)} (~${formatIdrNumber(idr)})`;
+}
+
+export function formatEthWithIdr(eth: number, ethPriceUsd?: number, showSign: boolean = false): string {
+  const idrPerEth = ethPriceUsd ? ethPriceUsd * rateService.getUsdToIdrRate() : rateService.getEthPriceIdr();
+  const idr = eth * idrPerEth;
+  const isNeg = eth < 0;
+  const sign = showSign ? (isNeg ? '' : '+') : '';
+  const idrSign = showSign ? (idr >= 0 ? '+' : '-') : (idr < 0 ? '-' : '');
+  return `${sign}${eth.toFixed(4)} ETH (~${idrSign}Rp ${Math.abs(Math.round(idr)).toLocaleString('id-ID')})`;
 }
 
 export interface DashboardData {
@@ -27,6 +58,10 @@ export function formatDashboard(data: DashboardData): string {
   const pnlSign = data.dailyNetPnlEth >= 0 ? '+' : '';
   const pnlEmoji = data.dailyNetPnlEth >= 0 ? '🟢' : '🔴';
 
+  const idrPnl = data.dailyNetPnlEth * rateService.getEthPriceIdr();
+  const idrSign = idrPnl >= 0 ? '+' : '-';
+  const idrText = `~${idrSign}Rp ${Math.abs(Math.round(idrPnl)).toLocaleString('id-ID')}`;
+
   let alertBanner = '';
   if (data.circuitBreakerTripped) {
     alertBanner = `\n⚠️ <b>CIRCUIT BREAKER ACTIVE!</b> Auto-buying halted due to daily max loss limit.\n`;
@@ -38,7 +73,7 @@ export function formatDashboard(data: DashboardData): string {
 <b>Trading Mode:</b> ${modeEmoji} <code>${modeText}</code>
 <b>Strategy Mode:</b> 🎯 <code>${stratText}</code>
 <b>Active Positions:</b> <code>${data.openPositionsCount} Open</code>
-<b>Daily 24h PnL:</b> ${pnlEmoji} <code>${pnlSign}${data.dailyNetPnlEth.toFixed(4)} ETH</code>${alertBanner}
+<b>Daily 24h PnL:</b> ${pnlEmoji} <code>${pnlSign}${data.dailyNetPnlEth.toFixed(4)} ETH (${idrText})</code>${alertBanner}
 <b>Chains Monitored:</b>
 • 🔵 <b>Base (8453):</b> ${data.baseScannerActive ? '🟢 Scanner Active' : '⚪ Idle'} | Aerodrome / V3
 • 🟣 <b>Robinhood (4663):</b> ${data.rhScannerActive ? '🟢 Scanner Active' : '⚪ Idle'} | Uniswap V4 / V3
@@ -65,13 +100,17 @@ export function formatTradeSignalCard(card: TradeSignalCardData): string {
   const safeSymbol = escapeHtml(card.tokenSymbol);
   const safeReasoning = escapeHtml(card.reasoning);
 
+  const tpPrice = card.entryPriceUsd * (1 + card.takeProfitPct / 100);
+  const slPrice = card.entryPriceUsd * (1 - card.stopLossPct / 100);
+  const ethSizeText = formatEthWithIdr(card.amountEth);
+
   return `🚀 <b>[${escapeHtml(card.chainName).toUpperCase()} - AI SCALP ENTRY]</b>
 ────────────────────────
 <b>Token:</b> $${safeSymbol} (<code>${shortCA}</code>)
-<b>Entry Price:</b> $${card.entryPriceUsd.toFixed(6)}
-<b>Position Size:</b> ${card.amountEth} ETH
-<b>Take Profit:</b> +${card.takeProfitPct.toFixed(1)}% ($${(card.entryPriceUsd * (1 + card.takeProfitPct / 100)).toFixed(6)})
-<b>Stop Loss:</b> -${card.stopLossPct.toFixed(1)}% ($${(card.entryPriceUsd * (1 - card.stopLossPct / 100)).toFixed(6)})
+<b>Entry Price:</b> ${formatPriceWithIdr(card.entryPriceUsd)}
+<b>Position Size:</b> ${ethSizeText}
+<b>Take Profit:</b> +${card.takeProfitPct.toFixed(1)}% (${formatPriceWithIdr(tpPrice)})
+<b>Stop Loss:</b> -${card.stopLossPct.toFixed(1)}% (${formatPriceWithIdr(slPrice)})
 <b>AI Confidence:</b> 🎯 <code>${card.confidence}%</code>
 
 <b>Key Signals:</b>
@@ -80,6 +119,50 @@ ${signalsList || '• Order flow & volume surge confirmed'}
 <b>AI Reasoning:</b>
 <i>"${safeReasoning}"</i>
 ────────────────────────`;
+}
+
+export interface NewTokenSnipeCardData {
+  chainName: string;
+  tokenName: string;
+  tokenSymbol: string;
+  tokenAddress: string;
+  entryPriceUsd: number;
+  amountEth: number;
+  initialLiquidityUsd: number;
+  poolAgeMinutes: number;
+  securityScore: number;
+  aiConfidence: number;
+  aiReasoning: string;
+  takeProfitPct: number;
+  stopLossPct: number;
+}
+
+export function formatNewTokenSnipeCard(data: NewTokenSnipeCardData): string {
+  const shortCA = `${data.tokenAddress.substring(0, 6)}...${data.tokenAddress.substring(data.tokenAddress.length - 4)}`;
+  const safeName = escapeHtml(data.tokenName);
+  const safeSymbol = escapeHtml(data.tokenSymbol);
+  const safeReasoning = escapeHtml(data.aiReasoning);
+  const ethSizeText = formatEthWithIdr(data.amountEth);
+  const tpPrice = data.entryPriceUsd * (1 + data.takeProfitPct / 100);
+  const slPrice = data.entryPriceUsd * (1 - data.stopLossPct / 100);
+
+  return `🎯 <b>[${escapeHtml(data.chainName).toUpperCase()} - NEW TOKEN AUTO-SNIPE]</b>
+────────────────────────
+<b>Token:</b> ${safeName} ($${safeSymbol})
+<b>Contract:</b> <code>${shortCA}</code>
+<b>Pool Age:</b> <code>${data.poolAgeMinutes}m ago</code>
+<b>Initial Liquidity:</b> <code>$${Math.round(data.initialLiquidityUsd).toLocaleString('en-US')}</code>
+<b>Security Score:</b> <b>${data.securityScore}/100</b> ✅
+────────────────────────
+<b>Entry Price:</b> ${formatPriceWithIdr(data.entryPriceUsd)}
+<b>Snipe Size:</b> ${ethSizeText}
+<b>Take Profit:</b> +${data.takeProfitPct.toFixed(1)}% (${formatPriceWithIdr(tpPrice)})
+<b>Stop Loss:</b> -${data.stopLossPct.toFixed(1)}% (${formatPriceWithIdr(slPrice)})
+<b>AI Confidence:</b> 🎯 <code>${data.aiConfidence}%</code>
+<b>AI Auditor Verdict:</b>
+<i>"${safeReasoning}"</i>
+────────────────────────
+<i>Posisi dipantau oleh AI Sentinel & Trailing Stop.</i>`;
 }
 
 export interface ExitCardData {
@@ -99,12 +182,16 @@ export function formatExitCard(data: ExitCardData): string {
   const safeSymbol = escapeHtml(data.tokenSymbol);
   const safeReason = escapeHtml(data.reason);
 
+  const pnlIdr = Math.round(data.pnlEth * rateService.getEthPriceIdr());
+  const pnlIdrSign = pnlIdr >= 0 ? '+' : '-';
+  const idrFormatted = `~${pnlIdrSign}Rp ${Math.abs(pnlIdr).toLocaleString('id-ID')}`;
+
   return `${emoji} <b>[${escapeHtml(data.chainName).toUpperCase()} - POSITION CLOSED]</b>
 ────────────────────────
 <b>Token:</b> $${safeSymbol}
 <b>Exit Reason:</b> <code>${safeReason}</code>
-<b>Close Price:</b> $${data.closePriceUsd.toFixed(6)}
-<b>Realized PnL:</b> ${isProfit ? '🟢' : '🔴'} <b>${sign}${data.pnlPct.toFixed(2)}% (${sign}${data.pnlEth.toFixed(4)} ETH)</b>
+<b>Close Price:</b> ${formatPriceWithIdr(data.closePriceUsd)}
+<b>Realized PnL:</b> ${isProfit ? '🟢' : '🔴'} <b>${sign}${data.pnlPct.toFixed(2)}% (${sign}${data.pnlEth.toFixed(4)} ETH / ${idrFormatted})</b>
 ────────────────────────`;
 }
 
@@ -127,6 +214,10 @@ export function generatePerformanceReport(trades: any[]): string {
 
   const pnlSign = totalNetPnlEth >= 0 ? '+' : '';
   const pnlEmoji = totalNetPnlEth >= 0 ? '🟢' : '🔴';
+  const ethIdrPrice = rateService.getEthPriceIdr();
+  const netPnlIdr = Math.round(totalNetPnlEth * ethIdrPrice);
+  const netPnlIdrSign = netPnlIdr >= 0 ? '+' : '-';
+  const idrFormatted = `~${netPnlIdrSign}Rp ${Math.abs(netPnlIdr).toLocaleString('id-ID')}`;
 
   // AI Score vs PnL Calibration Breakdown
   const highTier = closedTrades.filter((t) => (t.aiScore ?? 0) >= 85);
@@ -139,19 +230,22 @@ export function generatePerformanceReport(trades: any[]): string {
     return `${((w / list.length) * 100).toFixed(0)}% (${w}/${list.length})`;
   };
 
+  const bestEth = best.realizedPnlEth != null ? ` (${best.realizedPnlEth >= 0 ? '+' : ''}${best.realizedPnlEth.toFixed(4)} ETH / ~${best.realizedPnlEth >= 0 ? '+' : '-'}Rp ${Math.abs(Math.round(best.realizedPnlEth * ethIdrPrice)).toLocaleString('id-ID')})` : '';
+  const worstEth = worst.realizedPnlEth != null ? ` (${worst.realizedPnlEth >= 0 ? '+' : ''}${worst.realizedPnlEth.toFixed(4)} ETH / ~${worst.realizedPnlEth >= 0 ? '+' : '-'}Rp ${Math.abs(Math.round(worst.realizedPnlEth * ethIdrPrice)).toLocaleString('id-ID')})` : '';
+
   return `📊 <b>DAILY PERFORMANCE REPORT</b>
 ────────────────────────
 <b>Total Trades:</b> <code>${total}</code> (${wins.length}W / ${losses.length}L)
 <b>Win Rate:</b> <code>${winRate}%</code>
-<b>Net PnL:</b> ${pnlEmoji} <code>${pnlSign}${totalNetPnlEth.toFixed(4)} ETH</code>
+<b>Net PnL:</b> ${pnlEmoji} <code>${pnlSign}${totalNetPnlEth.toFixed(4)} ETH</code> (<code>${idrFormatted}</code>)
 
 🎯 <b>AI Calibration (Score vs Win Rate):</b>
 • High Score (≥85%): <code>${calcTierWR(highTier)}</code>
 • Moderate (75-84%): <code>${calcTierWR(midTier)}</code>
 • Rules-Only: <code>${calcTierWR(rulesTier)}</code>
 
-🏆 <b>Best Trade:</b> $${escapeHtml(best.tokenSymbol)} (+${best.realizedPnlPct?.toFixed(1)}%)
-📉 <b>Worst Trade:</b> $${escapeHtml(worst.tokenSymbol)} (${worst.realizedPnlPct?.toFixed(1)}%)
+🏆 <b>Best Trade:</b> $${escapeHtml(best.tokenSymbol)} (+${best.realizedPnlPct?.toFixed(1)}%)${bestEth}
+📉 <b>Worst Trade:</b> $${escapeHtml(worst.tokenSymbol)} (${worst.realizedPnlPct?.toFixed(1)}%)${worstEth}
 ────────────────────────`;
 }
 
@@ -190,19 +284,27 @@ export function formatAiDebateCard(data: AiDebateCardData): string {
   const hunterEmoji = data.hunterDecision.action === 'BUY' ? '🟢' : '🔴';
   const auditorEmoji = data.auditorDecision.action === 'BUY' ? '🟢' : '🔴';
 
+  const hunterTargetLine =
+    data.hunterDecision.action === 'BUY' && (data.hunterDecision.takeProfitPct ?? 0) > 0
+      ? `\n• Target: TP <code>+${data.hunterDecision.takeProfitPct}%</code> | SL <code>-${data.hunterDecision.stopLossPct ?? 6}%</code>`
+      : '';
+
+  const auditorTargetLine =
+    data.auditorDecision.action === 'BUY' && (data.auditorDecision.takeProfitPct ?? 0) > 0
+      ? `\n• Target: TP <code>+${data.auditorDecision.takeProfitPct}%</code> | SL <code>-${data.auditorDecision.stopLossPct ?? 6}%</code>`
+      : '';
+
   return `⚔️ <b>[DUAL AI DEBATE FEED]</b>
 ────────────────────────
 <b>Token:</b> $${escapeHtml(data.tokenSymbol)} (<code>${data.tokenAddress.substring(0, 8)}...${data.tokenAddress.substring(data.tokenAddress.length - 6)}</code>)
 <b>Network:</b> ${escapeHtml(data.chainName)}
 
 🏹 <b>Hunter Agent (Bull Momentum):</b>
-• Stance: ${hunterEmoji} <b>${data.hunterDecision.action}</b> (Confidence: <b>${data.hunterDecision.confidence}%</b>)
-• Target: TP <code>+${data.hunterDecision.takeProfitPct ?? 20}%</code> | SL <code>-${data.hunterDecision.stopLossPct ?? 6}%</code>
+• Stance: ${hunterEmoji} <b>${data.hunterDecision.action}</b> (Confidence: <b>${data.hunterDecision.confidence}%</b>)${hunterTargetLine}
 • Reasoning: <i>"${escapeHtml(data.hunterDecision.reasoning || 'No details')}"</i>
 
 🛡️ <b>Auditor Agent (Bear Risk):</b>
-• Stance: ${auditorEmoji} <b>${data.auditorDecision.action}</b> (Confidence: <b>${data.auditorDecision.confidence}%</b>)
-• Target: TP <code>+${data.auditorDecision.takeProfitPct ?? 20}%</code> | SL <code>-${data.auditorDecision.stopLossPct ?? 6}%</code>
+• Stance: ${auditorEmoji} <b>${data.auditorDecision.action}</b> (Confidence: <b>${data.auditorDecision.confidence}%</b>)${auditorTargetLine}
 • Audit Note: <i>"${escapeHtml(data.auditorDecision.reasoning || 'No details')}"</i>
 
 ⚖️ <b>Debate Consensus Verdict:</b>

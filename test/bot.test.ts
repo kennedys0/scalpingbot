@@ -49,4 +49,29 @@ describe('Telegram Bot UI: Formatters & Keyboards', () => {
     const snipeKeyboard = buildSnipeActionKeyboard(8453, '0x123');
     expect(snipeKeyboard).toBeDefined();
   });
+
+  it('formats new token auto-sniper alert message with rich metrics and security score', async () => {
+    const { formatNewTokenSnipeCard } = await import('../src/bot/messages/formatters.js');
+    const text = formatNewTokenSnipeCard({
+      chainName: 'Base',
+      tokenName: 'Early Rocket',
+      tokenSymbol: 'ROCKET',
+      tokenAddress: '0x1234567890abcdef1234567890abcdef12345678',
+      entryPriceUsd: 0.02,
+      amountEth: 0.01,
+      initialLiquidityUsd: 5400,
+      poolAgeMinutes: 4,
+      securityScore: 92,
+      aiConfidence: 88,
+      aiReasoning: 'Liquidity verified, healthy micro-orderflow, clean contract.',
+      takeProfitPct: 35,
+      stopLossPct: 8,
+    });
+
+    expect(text).toContain('NEW TOKEN AUTO-SNIPE');
+    expect(text).toContain('ROCKET');
+    expect(text).toContain('4m ago');
+    expect(text).toContain('92/100');
+    expect(text).toContain('88%');
+  });
 });
