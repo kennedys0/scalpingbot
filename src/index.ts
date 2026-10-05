@@ -2,7 +2,8 @@ import { getEnv } from './config/env.js';
 import { JsonStorage } from './storage/db.js';
 import { ScalpingOrchestrator } from './core/orchestrator.js';
 import { createTelegramBot } from './bot/index.js';
-import { formatTradeSignalCard, formatExitCard, formatAiDebateCard, formatRiskEvaluationCard } from './bot/messages/formatters.js';
+import { formatTradeSignalCard, formatNewTokenSnipeCard, formatExitCard, formatAiDebateCard, formatRiskEvaluationCard, formatPriceWithIdr } from './bot/messages/formatters.js';
+import { rateService } from './core/services/rateService.js';
 
 async function bootstrap() {
   console.log('🚀 Starting Multi-Chain AI Scalping Bot...');
@@ -22,13 +23,31 @@ async function bootstrap() {
     aiModelRobinhood: env.AI_MODEL_ROBINHOOD,
     walletPrivateKey: env.WALLET_PRIVATE_KEY,
     minAiConfidence: env.MIN_AI_CONFIDENCE,
+    minSecurityScore: env.SNIPER_MIN_SECURITY_SCORE,
     defaultTradeSizeEth: env.DEFAULT_TRADE_SIZE_ETH,
+    sniperTradeSizeEth: env.SNIPER_TRADE_SIZE_ETH,
     maxLossPerTradePct: env.MAX_LOSS_PER_TRADE_PCT,
     maxDailyLossEth: env.MAX_DAILY_LOSS_ETH,
 
     onTradeSignal: async (signal) => {
       if (botInstance && env.TELEGRAM_ALLOWED_USER_IDS.length > 0) {
-        const text = formatTradeSignalCard(signal);
+        const text = signal.isSnipe
+          ? formatNewTokenSnipeCard({
+              chainName: signal.chainName,
+              tokenName: signal.tokenSymbol,
+              tokenSymbol: signal.tokenSymbol,
+              tokenAddress: signal.tokenAddress,
+              entryPriceUsd: signal.entryPriceUsd,
+              amountEth: signal.amountEth,
+              initialLiquidityUsd: 5000,
+              poolAgeMinutes: 2,
+              securityScore: env.SNIPER_MIN_SECURITY_SCORE,
+              aiConfidence: signal.confidence,
+              aiReasoning: signal.reasoning,
+              takeProfitPct: signal.takeProfitPct,
+              stopLossPct: signal.stopLossPct,
+            })
+          : formatTradeSignalCard(signal);
         for (const userId of env.TELEGRAM_ALLOWED_USER_IDS) {
           await botInstance.api.sendMessage(userId, text, { parse_mode: 'HTML' }).catch(() => {});
         }
@@ -46,7 +65,7 @@ async function bootstrap() {
 
     onPartialTradeExit: async (partial) => {
       if (botInstance && env.TELEGRAM_ALLOWED_USER_IDS.length > 0) {
-        const text = `🪜 <b>[PARTIAL TAKE-PROFIT (+15%)]</b>\nToken: $${partial.tokenSymbol}\nSold: <b>50% of position</b>\nPrice: $${partial.currentPriceUsd.toFixed(6)}\n🛡️ <b>Stop Loss otomatis dinaikkan ke Breakeven (+1%)</b>!\nSisa 50% posisi dibiarkan berjalan risk-free.`;
+        const text = `🪜 <b>[PARTIAL TAKE-PROFIT (+15%)]</b>\nToken: $${partial.tokenSymbol}\nSold: <b>50% of position</b>\nPrice: ${formatPriceWithIdr(partial.currentPriceUsd)}\n🛡️ <b>Stop Loss otomatis dinaikkan ke Breakeven (+1%)</b>!\nSisa 50% posisi dibiarkan berjalan risk-free.`;
         for (const userId of env.TELEGRAM_ALLOWED_USER_IDS) {
           await botInstance.api.sendMessage(userId, text, { parse_mode: 'HTML' }).catch(() => {});
         }
@@ -112,18 +131,52 @@ async function bootstrap() {
     getActivePositions: () => orchestrator.getPositionTracker().getActivePositions(),
     sniper: orchestrator.getSniper(),
     getRecentActivities: () => orchestrator.getRecentActivities(),
+    getSettings: () => ({
+      defaultTradeSizeEth: env.DEFAULT_TRADE_SIZE_ETH,
+      maxDailyLossEth: env.MAX_DAILY_LOSS_ETH,
+      maxLossPerTradePct: env.MAX_LOSS_PER_TRADE_PCT,
+      maxTakeProfitPct: env.MAX_TAKE_PROFIT_PCT,
+      defaultSlippagePct: env.DEFAULT_SLIPPAGE_PCT,
+      sniperSlippagePct: env.SNIPER_SLIPPAGE_PCT,
+      minLiquidityUsd: env.MIN_LIQUIDITY_USD,
+      maxConcurrentPositions: env.MAX_CONCURRENT_POSITIONS,
+    }),
   });
+
+  // Initialize real-time CoinGecko rate service
+  await rateService.fetchRates().catch(() => {});
+  rateService.startPeriodicRefresh(60000);
 
   // Start background scanner
   orchestrator.startPeriodicScanner(30000);
 
+  // Start new token auto-sniper loop if enabled
+  if (env.AUTO_SNIPER_ENABLED) {
+    console.log('🎯 New Token Auto-Sniper is ENABLED. Starting fast pools scanner...');
+    orchestrator.startNewPoolsScanner(10000);
+  } else {
+    console.log('ℹ️ New Token Auto-Sniper is idle (AUTO_SNIPER_ENABLED=false).');
+  }
+
   // Start Telegram bot long-polling if valid token is provided
   if (env.TELEGRAM_BOT_TOKEN && !env.TELEGRAM_BOT_TOKEN.includes('test_token')) {
-    botInstance.start({
-      onStart: (botInfo: any) => {
-        console.log(`🤖 Telegram Bot @${botInfo.username} is active and ready!`);
-      },
-    });
+    const startBotWithRetry = async () => {
+      let isStopping = false;
+      while (!isStopping) {
+        try {
+          await botInstance.start({
+            onStart: (botInfo: any) => {
+              console.log(`🤖 Telegram Bot @${botInfo.username} is active and ready!`);
+            },
+          });
+          break;
+        } catch (err: any) {
+          console.warn(`⚠️ Telegram connection warning: ${err.message || err}. Reconnecting in 4s...`);
+          await new Promise((r) => setTimeout(r, 4000));
+        }
+      }
+    };
+    startBotWithRetry().catch((err) => console.error('Telegram bot runner error:', err));
   } else {
     console.log('ℹ️ Running in headless mode (TELEGRAM_BOT_TOKEN is dummy or not configured).');
   }
@@ -133,7 +186,9 @@ async function bootstrap() {
   // Graceful shutdown handling
   const shutdown = () => {
     console.log('\n🛑 Stopping bot gracefully...');
+    rateService.stopPeriodicRefresh();
     orchestrator.stopPeriodicScanner();
+    orchestrator.stopNewPoolsScanner();
     if (botInstance) botInstance.stop();
     process.exit(0);
   };
