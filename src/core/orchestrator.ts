@@ -23,6 +23,7 @@ import { reconcilePositionsOnChain, ReconciliationSummary } from './positions/re
 
 import { ExpectedValueCalculator } from './risk/evCalculator.js';
 import { TokenSecurityScorer } from './screener/securityScore.js';
+import { NewPoolsScanner, NewPoolCandidate } from './scanner/newPools.js';
 
 export interface AiDebateInfo {
   chainName: string;
@@ -69,6 +70,7 @@ export interface OrchestratorConfig {
   minRequiredEdgePct?: number;
   minSecurityScore?: number;
   defaultTradeSizeEth?: number;
+  sniperTradeSizeEth?: number;
   maxLossPerTradePct?: number;
   maxDailyLossEth?: number;
   enableOnChainSimulation?: boolean;
@@ -102,10 +104,13 @@ export class ScalpingOrchestrator {
   private honeypotSimRH: OnChainHoneypotSimulator;
   private evCalculator: ExpectedValueCalculator;
   private securityScorer: TokenSecurityScorer;
+  private newTokenScanner: NewPoolsScanner;
+  private newPoolsTimer: NodeJS.Timeout | null = null;
 
   private strategyMode: 'rules_only' | 'ai_veto' | 'dual_agent';
   private minAiConfidence: number;
   private defaultTradeSizeEth: number;
+  private sniperTradeSizeEth: number;
   private isEngineRunning: boolean = true;
   private enableOnChainSimulation: boolean;
   private scanTimer: NodeJS.Timeout | null = null;
@@ -128,6 +133,7 @@ export class ScalpingOrchestrator {
     });
     this.evCalculator = new ExpectedValueCalculator(config.minRequiredEdgePct ?? 1.5);
     this.securityScorer = new TokenSecurityScorer(config.minSecurityScore ?? 80);
+    this.newTokenScanner = new NewPoolsScanner({ maxAgeMinutes: 30, minLiquidityUsd: 2000 });
 
     this.viemManager = new ViemClientManager(config.walletPrivateKey);
     const baseRouter = new BaseRouterExecutor(this.viemManager);
@@ -176,6 +182,7 @@ export class ScalpingOrchestrator {
 
     this.minAiConfidence = config.minAiConfidence ?? 75;
     this.defaultTradeSizeEth = config.defaultTradeSizeEth ?? 0.02;
+    this.sniperTradeSizeEth = config.sniperTradeSizeEth ?? 0.01;
     this.onTradeSignal = config.onTradeSignal;
     this.onTradeExit = config.onTradeExit;
     this.onPartialTradeExit = config.onPartialTradeExit;
@@ -704,6 +711,153 @@ export class ScalpingOrchestrator {
     if (this.scanTimer) {
       clearInterval(this.scanTimer);
       this.scanTimer = null;
+    }
+  }
+
+  public getNewTokenScanner(): NewPoolsScanner {
+    return this.newTokenScanner;
+  }
+
+  public async evaluateAndSnipeNewPools(chainId: number): Promise<{ snipedCount: number; vetoedCount: number }> {
+    const candidates = await this.newTokenScanner.scanNewPools(chainId);
+    let snipedCount = 0;
+    let vetoedCount = 0;
+
+    for (const candidate of candidates) {
+      const openPositions = await this.tracker.getActivePositions(chainId);
+      if (openPositions.length >= 3) {
+        break;
+      }
+
+      const riskCheck = this.circuitBreaker.canOpenTrade();
+      if (!riskCheck.allowed) {
+        break;
+      }
+
+      if (this.blacklist.isBlacklisted(candidate.baseTokenAddress)) {
+        continue;
+      }
+
+      // Fast security check
+      const secScore = this.securityScorer.calculateScore({
+        canSell: true,
+        isHoneypot: false,
+        buyTaxPct: 0,
+        sellTaxPct: 0,
+        liquidityUsd: candidate.liquidityUsd,
+        fdvUsd: candidate.liquidityUsd * 4,
+        isOpenTrading: true,
+      });
+
+      if (!secScore.passed) {
+        this.newTokenScanner.markProcessed(candidate.baseTokenAddress);
+        await this.blacklist.addToBlacklist(candidate.baseTokenAddress, `Failed Security Filter: ${secScore.reasons.join(', ')}`, 'SECURITY_PERMANENT');
+        this.logActivity({
+          stage: 'SECURITY',
+          message: `🛡️ [SNIPER REJECT] $${candidate.tokenSymbol} Security Score ${secScore.totalScore}/100 ⛔`,
+          tokenSymbol: candidate.tokenSymbol,
+          level: 'WARN',
+        });
+        continue;
+      }
+
+      // Stage 1: AI Pre-Snipe Veto Gate
+      const aiEngine = chainId === 8453 ? this.aiBase : this.aiRobinhood;
+      const aiVerdict = await aiEngine.evaluateToken({
+        tokenName: candidate.tokenName,
+        tokenSymbol: candidate.tokenSymbol,
+        tokenAddress: candidate.baseTokenAddress,
+        chainName: chainId === 8453 ? 'Base' : 'Robinhood',
+        priceUsd: candidate.priceUsd,
+        metrics: {
+          priceUsd: candidate.priceUsd,
+          priceChange5m: 0,
+          priceChange1h: 0,
+          volume5m: candidate.liquidityUsd,
+          volume1h: candidate.liquidityUsd,
+          buys5m: 10,
+          sells5m: 2,
+          buyPressureRatio5m: 0.8,
+          volumeDelta5m: candidate.liquidityUsd * 0.5,
+          liquidityUsd: candidate.liquidityUsd,
+          fdv: candidate.liquidityUsd * 4,
+          liquidityToFdvRatio: 0.25,
+          isOrderFlowBullish: true,
+          volatilityScore: 50,
+        },
+      });
+
+      if (aiVerdict.action === 'AVOID') {
+        vetoedCount++;
+        this.newTokenScanner.markProcessed(candidate.baseTokenAddress);
+        await this.blacklist.addToBlacklist(candidate.baseTokenAddress, `AI Pre-Snipe Veto: ${aiVerdict.reasoning}`, 'AI_REJECT_TEMP');
+        this.logActivity({
+          stage: 'SECURITY',
+          message: `🚫 [PRE-SNIPE VETO] $${candidate.tokenSymbol}: ${aiVerdict.reasoning}`,
+          tokenSymbol: candidate.tokenSymbol,
+          level: 'ALERT',
+        });
+        continue;
+      }
+
+      // Passed AI check -> execute snipe
+      this.newTokenScanner.markProcessed(candidate.baseTokenAddress);
+      const buyRes = await this.sniper.executeSnipe({
+        chainId,
+        tokenAddress: candidate.baseTokenAddress,
+        tokenSymbol: candidate.tokenSymbol,
+        currentPriceUsd: candidate.priceUsd,
+        amountEth: this.sniperTradeSizeEth,
+        takeProfitPct: aiVerdict.takeProfitPct > 0 ? aiVerdict.takeProfitPct : 30.0,
+        stopLossPct: aiVerdict.stopLossPct > 0 ? aiVerdict.stopLossPct : 8.0,
+      });
+
+      if (buyRes.success) {
+        snipedCount++;
+        this.logActivity({
+          stage: 'ORDER',
+          message: `🎯 [AUTO-SNIPE EXECUTED] $${candidate.tokenSymbol} (${candidate.ageMinutes}m old) @ $${candidate.priceUsd}`,
+          tokenSymbol: candidate.tokenSymbol,
+          level: 'SUCCESS',
+        });
+
+        if (this.onTradeSignal) {
+          await this.onTradeSignal({
+            chainName: chainId === 8453 ? 'Base' : 'Robinhood',
+            tokenSymbol: candidate.tokenSymbol,
+            tokenAddress: candidate.baseTokenAddress,
+            entryPriceUsd: buyRes.entryPriceUsd || candidate.priceUsd,
+            amountEth: buyRes.amountEth || this.defaultTradeSizeEth,
+            takeProfitPct: aiVerdict.takeProfitPct > 0 ? aiVerdict.takeProfitPct : 30.0,
+            stopLossPct: aiVerdict.stopLossPct > 0 ? aiVerdict.stopLossPct : 8.0,
+            confidence: aiVerdict.confidence || 85,
+            reasoning: aiVerdict.reasoning || 'Auto-snipe of new liquidity pool',
+            signalsDetected: ['New Pool Launch', ...aiVerdict.signalsDetected],
+            isSnipe: true,
+          });
+        }
+      }
+    }
+
+    return { snipedCount, vetoedCount };
+  }
+
+  public startNewPoolsScanner(intervalMs: number = 10000): void {
+    if (this.newPoolsTimer) return;
+    this.newPoolsTimer = setInterval(async () => {
+      try {
+        await this.evaluateAndSnipeNewPools(8453);
+        await this.evaluateAndSnipeNewPools(4663);
+      } catch (err) {
+        console.warn(`New pools scan error: ${(err as Error).message}`);
+      }
+    }, intervalMs);
+  }
+
+  public stopNewPoolsScanner(): void {
+    if (this.newPoolsTimer) {
+      clearInterval(this.newPoolsTimer);
+      this.newPoolsTimer = null;
     }
   }
 }
