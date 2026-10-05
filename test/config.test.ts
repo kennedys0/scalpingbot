@@ -33,6 +33,8 @@ describe('Environment and Chain Configuration', () => {
     expect(baseConfig.name).toBe('Base');
     expect(baseConfig.nativeCurrency.symbol).toBe('ETH');
     expect(baseConfig.defaultRouter).toBeDefined();
+    expect(baseConfig.uniswapV2Router).toBe('0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24');
+    expect(baseConfig.uniswapV3Router).toBeDefined();
 
     const rhConfig = getChainConfig(4663);
     expect(rhConfig.chainId).toBe(4663);

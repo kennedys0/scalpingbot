@@ -19,6 +19,7 @@ export interface ChainDefinition {
   };
   dexscreenerChainId: string;
   defaultRouter: string;
+  uniswapV2Router?: string;
   uniswapV3Router?: string;
   uniswapV4PoolManager?: string;
   uniswapV4UniversalRouter?: string;
@@ -46,8 +47,9 @@ export const CHAIN_CONFIG: Record<number, ChainDefinition> = {
       },
     },
     dexscreenerChainId: 'base',
-    // Aerodrome Universal Router / SwapRouter
-    defaultRouter: '0xcF77a3Ba9A5CA399B7c97c7488454543B7374BE',
+    // Default to Uniswap V2 for maximum memecoin compatibility, plus Aerodrome & V3
+    defaultRouter: '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24', // Uniswap V2 Router02 on Base
+    uniswapV2Router: '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24',
     aerodromeRouter: '0xcF77a3Ba9A5CA399B7c97c7488454543B7374BE',
     // Uniswap V3 SwapRouter02 on Base
     uniswapV3Router: '0x2626664c2603336E57B271c5C0b26F421741e481',
