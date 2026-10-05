@@ -13,7 +13,7 @@ export interface Position {
   trailingStopPct?: number;
   highestPriceSeen?: number;
   partialTakeProfitDone?: boolean;
-  mode: 'paper' | 'live';
+  mode: 'paper' | 'live' | 'shadow';
   strategyMode?: 'rules_only' | 'ai_veto' | 'dual_agent';
   aiScore?: number;
   status: 'OPEN' | 'CLOSED';

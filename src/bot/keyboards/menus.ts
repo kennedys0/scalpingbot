@@ -2,14 +2,24 @@ import { InlineKeyboard } from 'grammy';
 
 export function buildMainMenuKeyboard(
   isRunning: boolean,
-  mode: 'paper' | 'live',
+  mode: 'paper' | 'live' | 'shadow',
   strategyMode: 'rules_only' | 'ai_veto' | 'dual_agent' = 'ai_veto'
 ): InlineKeyboard {
   const toggleRunText = isRunning ? '🔴 Stop Engine' : '🟢 Start Engine';
   const toggleRunData = isRunning ? 'engine_stop' : 'engine_start';
 
-  const toggleModeText = mode === 'paper' ? '⚡ Switch to Live' : '📝 Switch to Paper';
-  const toggleModeData = mode === 'paper' ? 'mode_live' : 'mode_paper';
+  let toggleModeText = '⚡ Switch to Live';
+  let toggleModeData = 'mode_live';
+  if (mode === 'paper') {
+    toggleModeText = '👻 Switch to Shadow';
+    toggleModeData = 'mode_shadow';
+  } else if (mode === 'shadow') {
+    toggleModeText = '⚡ Switch to Live';
+    toggleModeData = 'mode_live';
+  } else {
+    toggleModeText = '📝 Switch to Paper';
+    toggleModeData = 'mode_paper';
+  }
 
   return new InlineKeyboard()
     .text(toggleRunText, toggleRunData)

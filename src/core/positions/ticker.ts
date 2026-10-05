@@ -18,6 +18,7 @@ export class PositionTicker {
   private timer: NodeJS.Timeout | null = null;
   private isRunning: boolean = false;
   private lastPrices: Map<string, number> = new Map();
+  private tickHistories: Map<string, number[]> = new Map();
 
   constructor(
     tracker: PositionTracker,
@@ -38,18 +39,30 @@ export class PositionTicker {
 
       const rawPnl = ((currentPrice - pos.entryPriceUsd) / pos.entryPriceUsd) * 100;
       const pnlPct = Math.round(rawPnl * 100) / 100;
-      const lastPrice = this.lastPrices.get(pos.id);
-      this.lastPrices.set(pos.id, currentPrice);
+      const history = this.tickHistories.get(pos.id) || [];
+      const lastPrice = history.length > 0 ? history[history.length - 1] : this.lastPrices.get(pos.id);
 
-      // 0. Anti-Dump Check: Sudden flash dump drop >= 5% from previous tick
+      // 0. Multi-Factor Anti-Dump Check:
+      // A: Acute single-tick flash plunge >= 4.5%
+      // B: Multi-tick rolling cascade drop >= 5.0% across the last 3 ticks
       if (lastPrice !== undefined && lastPrice > 0) {
-        const tickDropPct = ((lastPrice - currentPrice) / lastPrice) * 100;
-        if (tickDropPct >= 5.0) {
+        const singleTickDropPct = ((lastPrice - currentPrice) / lastPrice) * 100;
+        const rollingDropPct = history.length >= 2
+          ? ((history[0] - currentPrice) / history[0]) * 100
+          : singleTickDropPct;
+
+        if (singleTickDropPct >= 4.5 || (history.length >= 2 && rollingDropPct >= 5.0)) {
           await this.onExit(pos, 'ANTI_DUMP', currentPrice);
           this.lastPrices.delete(pos.id);
+          this.tickHistories.delete(pos.id);
           continue;
         }
       }
+
+      // Record tick history (retain up to 3 ticks)
+      const updatedHistory = [...history, currentPrice].slice(-3);
+      this.tickHistories.set(pos.id, updatedHistory);
+      this.lastPrices.set(pos.id, currentPrice);
 
       // Update highest price for trailing stop
       await this.tracker.updateHighestPrice(pos.id, currentPrice);
@@ -60,6 +73,7 @@ export class PositionTicker {
       if (pnlPct >= pos.takeProfitPct) {
         await this.onExit(pos, 'TAKE_PROFIT', currentPrice);
         this.lastPrices.delete(pos.id);
+        this.tickHistories.delete(pos.id);
         continue;
       }
 
@@ -79,6 +93,7 @@ export class PositionTicker {
         if (dropFromHighestPct >= trailingThreshold) {
           await this.onExit(pos, 'TRAILING_STOP', currentPrice);
           this.lastPrices.delete(pos.id);
+          this.tickHistories.delete(pos.id);
           continue;
         }
       }
@@ -87,6 +102,7 @@ export class PositionTicker {
       if (pnlPct <= -pos.stopLossPct) {
         await this.onExit(pos, 'STOP_LOSS', currentPrice);
         this.lastPrices.delete(pos.id);
+        this.tickHistories.delete(pos.id);
         continue;
       }
 
@@ -95,6 +111,7 @@ export class PositionTicker {
       if (openDurationMs >= 45 * 60 * 1000 && Math.abs(pnlPct) <= 2.0) {
         await this.onExit(pos, 'TIME_EXPIRATION', currentPrice);
         this.lastPrices.delete(pos.id);
+        this.tickHistories.delete(pos.id);
         continue;
       }
     }

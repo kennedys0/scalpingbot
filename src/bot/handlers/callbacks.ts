@@ -7,7 +7,7 @@ export function registerCallbacks(
   context: {
     getDashboardData: () => any;
     setEngineRunning: (running: boolean) => void;
-    setTradingMode: (mode: 'paper' | 'live') => void;
+    setTradingMode: (mode: 'paper' | 'live' | 'shadow') => void;
     setStrategyMode?: (mode: 'rules_only' | 'ai_veto' | 'dual_agent') => void;
     closeAllPositions: () => Promise<number>;
     getActivePositions: () => Promise<any[]>;
@@ -55,6 +55,15 @@ export function registerCallbacks(
     const keyboard = buildMainMenuKeyboard(data.isRunning, data.mode, data.strategyMode);
     await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard }).catch(() => {});
     await ctx.answerCallbackQuery('📝 Switched to PAPER Simulation Mode!');
+  });
+
+  bot.callbackQuery('mode_shadow', async (ctx: Context) => {
+    context.setTradingMode('shadow');
+    const data = context.getDashboardData();
+    const text = formatDashboard(data);
+    const keyboard = buildMainMenuKeyboard(data.isRunning, data.mode, data.strategyMode);
+    await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard }).catch(() => {});
+    await ctx.answerCallbackQuery('👻 Switched to SHADOW Zero-Risk Tracking Mode!');
   });
 
   bot.callbackQuery('strat_rules_only', async (ctx: Context) => {

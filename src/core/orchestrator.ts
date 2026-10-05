@@ -21,9 +21,12 @@ import { SmartMoneyRadar } from './screener/smartMoney.js';
 import { OnChainHoneypotSimulator } from './screener/honeypotSimulator.js';
 import { reconcilePositionsOnChain, ReconciliationSummary } from './positions/reconciliation.js';
 
+import { ExpectedValueCalculator } from './risk/evCalculator.js';
+import { TokenSecurityScorer } from './screener/securityScore.js';
+
 export interface OrchestratorConfig {
   storage: JsonStorage;
-  mode?: 'paper' | 'live';
+  mode?: 'paper' | 'live' | 'shadow';
   strategyMode?: 'rules_only' | 'ai_veto' | 'dual_agent';
   initialVirtualEth?: number;
   openRouterBaseUrl?: string;
@@ -33,6 +36,8 @@ export interface OrchestratorConfig {
   aiModelRobinhood?: string;
   walletPrivateKey?: string;
   minAiConfidence?: number;
+  minRequiredEdgePct?: number;
+  minSecurityScore?: number;
   defaultTradeSizeEth?: number;
   maxLossPerTradePct?: number;
   maxDailyLossEth?: number;
@@ -62,6 +67,8 @@ export class ScalpingOrchestrator {
   private viemManager: ViemClientManager;
   private honeypotSimBase: OnChainHoneypotSimulator;
   private honeypotSimRH: OnChainHoneypotSimulator;
+  private evCalculator: ExpectedValueCalculator;
+  private securityScorer: TokenSecurityScorer;
 
   private strategyMode: 'rules_only' | 'ai_veto' | 'dual_agent';
   private minAiConfidence: number;
@@ -82,6 +89,8 @@ export class ScalpingOrchestrator {
       maxLossPerTradePct: config.maxLossPerTradePct ?? 10.0,
       maxDailyLossEth: config.maxDailyLossEth ?? 0.10,
     });
+    this.evCalculator = new ExpectedValueCalculator(config.minRequiredEdgePct ?? 1.5);
+    this.securityScorer = new TokenSecurityScorer(config.minSecurityScore ?? 80);
 
     this.viemManager = new ViemClientManager(config.walletPrivateKey);
     const baseRouter = new BaseRouterExecutor(this.viemManager);
@@ -178,6 +187,22 @@ export class ScalpingOrchestrator {
     return this.engine;
   }
 
+  public getEVCalculator(): ExpectedValueCalculator {
+    return this.evCalculator;
+  }
+
+  public getSecurityScorer(): TokenSecurityScorer {
+    return this.securityScorer;
+  }
+
+  public getTradingMode(): 'paper' | 'live' | 'shadow' {
+    return this.engine.getMode();
+  }
+
+  public setTradingMode(mode: 'paper' | 'live' | 'shadow'): void {
+    this.engine.setMode(mode);
+  }
+
   public getSniper(): InstantSniper {
     return this.sniper;
   }
@@ -226,7 +251,28 @@ export class ScalpingOrchestrator {
       // 1. Calculate Quantitative Microstructure Metrics
       const metrics = calculateMicrostructureMetrics(pair);
 
-      // 2. Pre-Screening (Security, Liquidity & Anti-Dump)
+      // 2. Pre-Screening: Multi-Factor Token Security Score (0-100)
+      const securityScoreResult = this.securityScorer.calculateScore({
+        canSell: true,
+        isHoneypot: false,
+        buyTaxPct: 0,
+        sellTaxPct: 0,
+        liquidityUsd: pair.liquidity?.usd ?? 0,
+        fdvUsd: pair.fdv,
+        isOpenTrading: true,
+      });
+
+      if (!securityScoreResult.passed) {
+        await this.blacklist.addToBlacklist(
+          pair.baseToken.address,
+          `Security score failed (${securityScoreResult.totalScore}/100): ${securityScoreResult.reasons.join(', ')}`,
+          'LOW_LIQUIDITY_TEMP',
+          6
+        );
+        continue;
+      }
+
+      // 2.1 Microstructure and Anti-Dump Check
       const screenResult = this.screener.screenToken({
         pairAddress: pair.pairAddress,
         liquidityUsd: pair.liquidity?.usd ?? 0,
@@ -239,21 +285,27 @@ export class ScalpingOrchestrator {
       });
 
       if (!screenResult.isSafe) {
-        // Auto-blacklist with 6-hour TTL for temporary screening failures (e.g. low initial liquidity)
-        await this.blacklist.addToBlacklist(pair.baseToken.address, screenResult.reasons.join(', '), 6);
+        // Auto-blacklist with 6-hour TTL for temporary screening failures
+        await this.blacklist.addToBlacklist(
+          pair.baseToken.address,
+          screenResult.reasons.join(', '),
+          'LOW_LIQUIDITY_TEMP',
+          6
+        );
         continue;
       }
 
       if (!metrics.isOrderFlowBullish) continue;
 
-      // 2.1 On-Chain Static Honeypot Simulation via eth_call
+      // 2.2 On-Chain Static Honeypot Simulation via eth_call
       if (this.enableOnChainSimulation || this.engine.getMode() === 'live') {
         const honeypotSim = chainId === 8453 ? this.honeypotSimBase : this.honeypotSimRH;
         const simResult = await honeypotSim.simulateToken(pair.baseToken.address as `0x${string}`);
         if (simResult.isHoneypot) {
           await this.blacklist.addToBlacklist(
             pair.baseToken.address,
-            `Honeypot static simulation failed: ${simResult.reason}`
+            `Honeypot static simulation failed: ${simResult.reason}`,
+            'SECURITY_PERMANENT'
           );
           continue;
         }
@@ -350,10 +402,12 @@ export class ScalpingOrchestrator {
       }
 
       if (decisionAction === 'AVOID' || confidence < this.minAiConfidence) {
-        // Auto-blacklist tokens deemed unviable by AI (permanent)
+        // Auto-blacklist tokens deemed unviable by AI (12 hour temp TTL)
         await this.blacklist.addToBlacklist(
           pair.baseToken.address,
-          `AI Rejected (${confidence}%): ${reasoning}`
+          `AI Rejected (${confidence}%): ${reasoning}`,
+          'AI_REJECT_TEMP',
+          12
         );
         continue;
       }
@@ -371,6 +425,25 @@ export class ScalpingOrchestrator {
           this.defaultTradeSizeEth,
           Math.max(maxSafeAllocEth, 0.005)
         );
+
+        // 4. Risk Engine Mathematical Expected Value Gatekeeper: Absolute veto power over AI
+        const evResult = this.evCalculator.calculateEV({
+          confidence,
+          takeProfitPct: clampedTP,
+          stopLossPct: clampedSL,
+          positionSizeEth: targetAllocEth,
+        });
+
+        if (!evResult.allowed) {
+          console.warn(`[Risk Engine Veto] EV insufficient for ${pair.baseToken.symbol}: ${evResult.reason}`);
+          await this.blacklist.addToBlacklist(
+            pair.baseToken.address,
+            `Risk Engine EV Veto: ${evResult.reason}`,
+            'AI_REJECT_TEMP',
+            12
+          );
+          continue;
+        }
 
         const buyResult = await this.engine.executeBuy({
           chainId,

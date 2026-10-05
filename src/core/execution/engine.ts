@@ -5,7 +5,7 @@ import { PositionTracker, Position } from '../positions/tracker.js';
 import { BuyOrderParams, BuyResult, SellResult } from './types.js';
 
 export interface ExecutionEngineConfig {
-  mode: 'paper' | 'live';
+  mode: 'paper' | 'live' | 'shadow';
   paperTrader: PaperTrader;
   tracker: PositionTracker;
   baseRouter?: BaseRouterExecutor;
@@ -13,7 +13,7 @@ export interface ExecutionEngineConfig {
 }
 
 export class ExecutionEngine {
-  private mode: 'paper' | 'live';
+  private mode: 'paper' | 'live' | 'shadow';
   private paperTrader: PaperTrader;
   private tracker: PositionTracker;
   private baseRouter?: BaseRouterExecutor;
@@ -27,19 +27,19 @@ export class ExecutionEngine {
     this.rhRouter = config.rhRouter;
   }
 
-  public getMode(): 'paper' | 'live' {
+  public getMode(): 'paper' | 'live' | 'shadow' {
     return this.mode;
   }
 
-  public setMode(mode: 'paper' | 'live'): void {
+  public setMode(mode: 'paper' | 'live' | 'shadow'): void {
     this.mode = mode;
   }
 
   public async executeBuy(order: BuyOrderParams): Promise<BuyResult> {
     let result: BuyResult;
 
-    if (this.mode === 'paper') {
-      result = await this.paperTrader.simulateBuy(order);
+    if (this.mode === 'paper' || this.mode === 'shadow') {
+      result = await this.paperTrader.simulateBuy(order, this.mode === 'shadow');
     } else {
       if (order.chainId === 8453) {
         if (!this.baseRouter) throw new Error('Base router executor not initialized');
@@ -84,8 +84,8 @@ export class ExecutionEngine {
   ): Promise<SellResult> {
     let result: SellResult;
 
-    if (position.mode === 'paper') {
-      result = await this.paperTrader.simulateSell(position, currentPriceUsd);
+    if (position.mode === 'paper' || position.mode === 'shadow') {
+      result = await this.paperTrader.simulateSell(position, currentPriceUsd, position.mode === 'shadow');
     } else {
       if (position.chainId === 8453) {
         if (!this.baseRouter) throw new Error('Base router not initialized');
@@ -113,8 +113,13 @@ export class ExecutionEngine {
     currentPriceUsd: number,
     pctToSell: number = 50
   ): Promise<SellResult> {
-    if (this.mode === 'paper') {
-      return await this.paperTrader.simulatePartialSell(position, currentPriceUsd, pctToSell);
+    if (this.mode === 'paper' || this.mode === 'shadow') {
+      return await this.paperTrader.simulatePartialSell(
+        position,
+        currentPriceUsd,
+        pctToSell,
+        position.mode === 'shadow'
+      );
     } else {
       const fraction = pctToSell / 100;
       const partialPos: Position = {

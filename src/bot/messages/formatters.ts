@@ -9,7 +9,7 @@ export function escapeHtml(str: string | undefined | null): string {
 
 export interface DashboardData {
   isRunning: boolean;
-  mode: 'paper' | 'live';
+  mode: 'paper' | 'live' | 'shadow';
   strategyMode?: 'rules_only' | 'ai_veto' | 'dual_agent';
   dailyNetPnlEth: number;
   openPositionsCount: number;
@@ -21,7 +21,7 @@ export interface DashboardData {
 export function formatDashboard(data: DashboardData): string {
   const statusEmoji = data.isRunning ? '🟢' : '🔴';
   const statusText = data.isRunning ? 'RUNNING' : 'STOPPED';
-  const modeEmoji = data.mode === 'paper' ? '📝' : '⚡';
+  const modeEmoji = data.mode === 'live' ? '⚡' : data.mode === 'shadow' ? '👻' : '📝';
   const modeText = data.mode.toUpperCase();
   const stratText = (data.strategyMode || 'ai_veto').replace('_', ' ').toUpperCase();
   const pnlSign = data.dailyNetPnlEth >= 0 ? '+' : '';

@@ -79,7 +79,7 @@ async function bootstrap() {
     getTradesHistory: () => storage.getData().trades || [],
     blacklistManager: orchestrator.getBlacklistManager(),
     setEngineRunning: (running: boolean) => orchestrator.setRunning(running),
-    setTradingMode: (mode: 'paper' | 'live') => orchestrator.getExecutionEngine().setMode(mode),
+    setTradingMode: (mode: 'paper' | 'live' | 'shadow') => orchestrator.getExecutionEngine().setMode(mode),
     setStrategyMode: (mode: 'rules_only' | 'ai_veto' | 'dual_agent') => orchestrator.setStrategyMode(mode),
     closeAllPositions: async () => {
       const active = await orchestrator.getPositionTracker().getActivePositions();
