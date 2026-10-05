@@ -14,6 +14,10 @@ import { BaseRouterExecutor } from './execution/routers/baseRouter.js';
 import { RobinhoodRouterExecutor } from './execution/routers/rhRouter.js';
 
 import { BlacklistManager } from './screener/blacklist.js';
+import { DualAgentDebateEngine } from './ai/debate.js';
+import { SelfReflectiveMemory } from './ai/memory.js';
+import { MacroEthSentinel } from './scanner/macroRegime.js';
+import { SmartMoneyRadar } from './screener/smartMoney.js';
 
 export interface OrchestratorConfig {
   storage: JsonStorage;
@@ -47,6 +51,10 @@ export class ScalpingOrchestrator {
   private blacklist: BlacklistManager;
   private aiBase: AiScalpEngine;
   private aiRobinhood: AiScalpEngine;
+  private debateEngine: DualAgentDebateEngine;
+  private memory: SelfReflectiveMemory;
+  private macroSentinel: MacroEthSentinel;
+  private smartMoneyRadar: SmartMoneyRadar;
 
   private minAiConfidence: number;
   private defaultTradeSizeEth: number;
@@ -81,6 +89,9 @@ export class ScalpingOrchestrator {
     this.screener = new SafetyScreener();
     this.sniper = new InstantSniper(this.engine);
     this.blacklist = new BlacklistManager(this.storage);
+    this.memory = new SelfReflectiveMemory(this.storage);
+    this.macroSentinel = new MacroEthSentinel();
+    this.smartMoneyRadar = new SmartMoneyRadar();
 
     this.aiBase = new AiScalpEngine({
       apiKey: config.openRouterKeyBase || '',
@@ -95,6 +106,13 @@ export class ScalpingOrchestrator {
       model: config.aiModelRobinhood,
       chainId: 4663,
     });
+
+    // Dual-Agent Debate Engine: Bull Hunter (aiBase) vs Bear Auditor (aiRobinhood)
+    this.debateEngine = new DualAgentDebateEngine(
+      this.aiBase,
+      this.aiRobinhood,
+      config.minAiConfidence ?? 78
+    );
 
     this.minAiConfidence = config.minAiConfidence ?? 75;
     this.defaultTradeSizeEth = config.defaultTradeSizeEth ?? 0.02;
@@ -116,6 +134,18 @@ export class ScalpingOrchestrator {
 
   public getBlacklistManager(): BlacklistManager {
     return this.blacklist;
+  }
+
+  public getMemory(): SelfReflectiveMemory {
+    return this.memory;
+  }
+
+  public getMacroSentinel(): MacroEthSentinel {
+    return this.macroSentinel;
+  }
+
+  public getSmartMoneyRadar(): SmartMoneyRadar {
+    return this.smartMoneyRadar;
   }
 
   public getPositionTracker(): PositionTracker {
@@ -271,13 +301,26 @@ export class ScalpingOrchestrator {
     if (sellResult.success && sellResult.realizedPnlEth !== undefined) {
       this.circuitBreaker.recordClosedTrade(sellResult.realizedPnlEth);
 
+      const pnlPct = sellResult.realizedPnlPct ?? 0;
+      const isWin = pnlPct > 0;
+      const lesson = isWin
+        ? `Order flow momentum follow-through on ${position.tokenSymbol} confirmed. Closed on ${reason} with profit.`
+        : `Exit on ${reason} for ${position.tokenSymbol} at ${pnlPct.toFixed(1)}%. Watch out for reversal on sudden volume decay.`;
+
+      await this.memory.recordPostMortem({
+        tokenSymbol: position.tokenSymbol,
+        outcome: isWin ? 'WIN' : 'LOSS',
+        pnlPct,
+        lessonLearned: lesson,
+      });
+
       if (this.onTradeExit) {
         await this.onTradeExit({
           chainId: position.chainId,
           chainName: position.chainId === 8453 ? 'Base' : 'Robinhood',
           tokenSymbol: position.tokenSymbol,
           reason,
-          pnlPct: sellResult.realizedPnlPct ?? 0,
+          pnlPct,
           pnlEth: sellResult.realizedPnlEth,
           closePriceUsd: currentPrice,
           txHash: sellResult.txHash,

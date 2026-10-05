@@ -6,14 +6,20 @@ Bot scalping otomatis berbasis kecerdasan buatan (Dual AI Engine via OpenRouter 
 
 ---
 
-## 🌟 Fitur Utama
+## 🌟 Fitur Utama & Superpower AI
 
-- **Dual AI Scalping Brain (OpenRouter)**: Menggunakan 2 API key terpisah untuk masing-masing chain dengan kuota & model independen (misal: DeepSeek di Base, Claude 3.5 Sonnet di Robinhood).
-- **Embedded Crypto Domain Knowledge**: Dilengkapi pengetahuan mendalam tentang mikrostruktur pasar DEX:
-  - *Order Flow & Cumulative Volume Delta (CVD)*
-  - *Buy Pressure Ratio (Market Buys vs Sells)*
-  - *Liquidity Depth vs FDV (Slippage Impact)*
-  - *Karakteristik memecoin Base vs token RWA Robinhood*
+- **⚔️ Multi-Agent Debate Engine (Dual-Agent Consensus)**:
+  - Memanfaatkan 2 API Key AI secara kolaboratif:
+    - **Agent 1 (Bullish Momentum Hunter)**: Mencari sinyal breakout, akselerasi volume, dan potensi explosive.
+    - **Agent 2 (Bearish Risk Auditor)**: Mengaudit jebakan rugpull, dev sell pressure, dan fake liquidity.
+    - **Konsensus Ketat**: Transaksi hanya dibuka jika kedua AI sepakat dengan skor konsensus ≥ 78-80%!
+- **🧠 Self-Reflective Episodic Memory**:
+  - Bot memiliki "ingatan" belajar sendiri. Setiap kali trade selesai (TP maupun SL), bot mencatat *Trade Post-Mortem* (alasan keberhasilan/kegagalan).
+  - Pada analisis berikutnya, AI disuplai catatan pelajaran masa lalu agar **tidak pernah mengulangi kesalahan yang sama**!
+- **🌐 Macro-Market Sentinel (ETH Flash Crash Guard)**:
+  - Memantau kondisi makro ETH secara real-time. Jika ETH mengalami penurunan mendadak (≥ -2% dalam 5 menit), bot otomatis beralih ke **Defensive Mode** (jeda auto-buy) untuk mencegah kerugian akibat terseret crash pasar umum.
+- **🐋 Smart Money Radar**:
+  - Melacak aktivitas dompet trader papan atas (*smart money/whale*). Jika wallet ber-winrate tinggi mengakumulasi token target, skor keyakinan AI otomatis mendapatkan *boost*.
 - **Pre-Computed Math**: Formula kuantitatif (Volume Delta, Buy Pressure Ratio, Volatilitas) dihitung otomatis oleh TypeScript sebelum prompt dikirim ke AI agar AI tidak salah hitung matematika.
 - **Smart Auto-Blacklist & Whitelist**:
   - Token yang **gagal pre-screening** (likuiditas buruk, tax tinggi, honeypot, anti-dump) atau **ditolak AI (AVOID)** langsung di-blacklist permanen sehingga tidak akan pernah di-scan atau dianalisis ulang, menghemat kuota AI dan waktu!
