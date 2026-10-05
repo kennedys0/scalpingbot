@@ -98,4 +98,70 @@ describe('Position Tracker & Real-Time TP/SL Ticker', () => {
       1.88
     );
   });
+
+  it('triggers Trailing Stop when profit reached +8% and then pulls back by trailing threshold', async () => {
+    await tracker.openPosition({
+      id: 'pos_trail',
+      chainId: 8453,
+      tokenAddress: '0xtrail',
+      tokenSymbol: 'TRAIL_COIN',
+      entryPriceUsd: 1.0,
+      amountTokens: 1000,
+      costEth: 0.02,
+      takeProfitPct: 30.0,
+      stopLossPct: 10.0,
+      trailingStopPct: 3.0,
+      mode: 'paper',
+      status: 'OPEN',
+      openedAt: Date.now(),
+    });
+
+    const onExit = vi.fn();
+    const ticker = new PositionTicker(tracker, onExit);
+
+    // 1. Price runs up to $1.15 (+15% profit, above 8% threshold)
+    await ticker.checkPositionsWithPrices({ '0xtrail': 1.15 });
+    expect(onExit).not.toHaveBeenCalled();
+
+    // 2. Price retraces from peak of $1.15 to $1.11 (drop of ~3.47% > 3% trailing limit)
+    await ticker.checkPositionsWithPrices({ '0xtrail': 1.11 });
+    expect(onExit).toHaveBeenCalledTimes(1);
+    expect(onExit).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'pos_trail' }),
+      'TRAILING_STOP',
+      1.11
+    );
+  });
+
+  it('triggers emergency Anti-Dump exit when flash dump drop >= 5% occurs abruptly', async () => {
+    await tracker.openPosition({
+      id: 'pos_dump',
+      chainId: 8453,
+      tokenAddress: '0xdump',
+      tokenSymbol: 'DUMP_COIN',
+      entryPriceUsd: 1.0,
+      amountTokens: 1000,
+      costEth: 0.02,
+      takeProfitPct: 30.0,
+      stopLossPct: 10.0,
+      mode: 'paper',
+      status: 'OPEN',
+      openedAt: Date.now(),
+    });
+
+    const onExit = vi.fn();
+    const ticker = new PositionTicker(tracker, onExit);
+
+    // Initial price check at entry
+    await ticker.checkPositionsWithPrices({ '0xdump': 1.0 });
+
+    // Sudden flash dump in next tick: price plunges to $0.94 (-6% flash dump in single tick)
+    await ticker.checkPositionsWithPrices({ '0xdump': 0.94 });
+    expect(onExit).toHaveBeenCalledTimes(1);
+    expect(onExit).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'pos_dump' }),
+      'ANTI_DUMP',
+      0.94
+    );
+  });
 });

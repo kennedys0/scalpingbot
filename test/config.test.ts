@@ -15,7 +15,8 @@ describe('Environment and Chain Configuration', () => {
     expect(env.TELEGRAM_BOT_TOKEN).toBe('123456:test_token');
     expect(env.TELEGRAM_ALLOWED_USER_IDS).toEqual([111, 222]);
     expect(env.DEFAULT_TRADING_MODE).toBe('paper');
-    expect(env.MAX_LOSS_PER_TRADE_PCT).toBe(7.0);
+    expect(env.MAX_TAKE_PROFIT_PCT).toBe(30.0);
+    expect(env.MAX_LOSS_PER_TRADE_PCT).toBe(10.0);
     expect(env.MAX_DAILY_LOSS_ETH).toBe(0.10);
   });
 

@@ -6,18 +6,24 @@ describe('Risk Management & Circuit Breakers', () => {
 
   beforeEach(() => {
     circuitBreaker = new CircuitBreaker({
-      maxLossPerTradePct: 7.0,
+      maxTakeProfitPct: 30.0,
+      maxLossPerTradePct: 10.0,
       maxDailyLossEth: 0.10,
     });
   });
 
-  it('clamps proposed stop loss to the maximum configured safety threshold', () => {
-    // If AI proposes 12% SL, it should be clamped to 7.0%
-    const clampedSL = circuitBreaker.clampStopLoss(12.0);
-    expect(clampedSL).toBe(7.0);
+  it('clamps proposed take profit to the maximum 30% threshold', () => {
+    expect(circuitBreaker.clampTakeProfit(50.0)).toBe(30.0);
+    expect(circuitBreaker.clampTakeProfit(25.0)).toBe(25.0);
+  });
 
-    // If AI proposes a tighter 4% SL, keep 4.0%
-    expect(circuitBreaker.clampStopLoss(4.0)).toBe(4.0);
+  it('clamps proposed stop loss to the maximum 10% safety threshold', () => {
+    // If AI proposes 15% SL, it should be clamped to 10.0%
+    const clampedSL = circuitBreaker.clampStopLoss(15.0);
+    expect(clampedSL).toBe(10.0);
+
+    // If AI proposes 6% SL, keep 6.0%
+    expect(circuitBreaker.clampStopLoss(6.0)).toBe(6.0);
   });
 
   it('trips the circuit breaker when daily losses exceed threshold', () => {

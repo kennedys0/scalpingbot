@@ -42,10 +42,23 @@ describe('Market Scanner & Anti-Honeypot Safety Screener', () => {
       isOpenTrading: true,
     };
 
+    const unsafeDumpingToken = {
+      pairAddress: '0xdumping',
+      liquidityUsd: 20000,
+      buyTax: 0,
+      sellTax: 0,
+      isHoneypot: false,
+      isOpenTrading: true,
+      priceChange5m: -9.5, // > 8% dump in 5m
+      sellVolumeRatio: 0.70, // > 60% sell pressure
+    };
+
     expect(screener.screenToken(safeToken).isSafe).toBe(true);
     expect(screener.screenToken(unsafeLowLiq).isSafe).toBe(false);
     expect(screener.screenToken(unsafeHighTax).isSafe).toBe(false);
     expect(screener.screenToken(unsafeHoneypot).isSafe).toBe(false);
+    expect(screener.screenToken(unsafeDumpingToken).isSafe).toBe(false);
+    expect(screener.screenToken(unsafeDumpingToken).reasons.some(r => r.includes('dump'))).toBe(true);
   });
 
   it('scans and transforms DexScreener pairs for Base and Robinhood', async () => {

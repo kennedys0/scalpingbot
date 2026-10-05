@@ -6,6 +6,8 @@ export interface TokenSecurityData {
   isHoneypot: boolean;
   isOpenTrading: boolean;
   isLiquidityLocked?: boolean;
+  priceChange5m?: number;
+  sellVolumeRatio?: number;
 }
 
 export interface ScreeningResult {
@@ -16,10 +18,19 @@ export interface ScreeningResult {
 export class SafetyScreener {
   private minLiquidityUsd: number;
   private maxTaxPct: number;
+  private max5mDropPct: number;
+  private maxSellRatio: number;
 
-  constructor(options: { minLiquidityUsd?: number; maxTaxPct?: number } = {}) {
+  constructor(options: {
+    minLiquidityUsd?: number;
+    maxTaxPct?: number;
+    max5mDropPct?: number;
+    maxSellRatio?: number;
+  } = {}) {
     this.minLiquidityUsd = options.minLiquidityUsd ?? 5000;
     this.maxTaxPct = options.maxTaxPct ?? 7;
+    this.max5mDropPct = options.max5mDropPct ?? 8.0;
+    this.maxSellRatio = options.maxSellRatio ?? 0.60;
   }
 
   public screenToken(data: TokenSecurityData): ScreeningResult {
@@ -45,6 +56,15 @@ export class SafetyScreener {
 
     if (data.sellTax > this.maxTaxPct) {
       reasons.push(`Sell tax too high: ${data.sellTax}% exceeds max ${this.maxTaxPct}%.`);
+    }
+
+    // Anti-Dump Check
+    if (data.priceChange5m !== undefined && data.priceChange5m <= -this.max5mDropPct) {
+      reasons.push(`Anti-dump filter triggered: 5m price drop (${data.priceChange5m}%) exceeds -${this.max5mDropPct}%.`);
+    }
+
+    if (data.sellVolumeRatio !== undefined && data.sellVolumeRatio >= this.maxSellRatio) {
+      reasons.push(`Anti-dump filter triggered: sell pressure (${(data.sellVolumeRatio * 100).toFixed(1)}%) indicates whale dumping.`);
     }
 
     return {

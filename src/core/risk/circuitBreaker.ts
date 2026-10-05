@@ -1,4 +1,5 @@
 export interface CircuitBreakerConfig {
+  maxTakeProfitPct?: number;
   maxLossPerTradePct: number;
   maxDailyLossEth: number;
 }
@@ -9,14 +10,20 @@ export interface TradePnLEntry {
 }
 
 export class CircuitBreaker {
+  private maxTakeProfitPct: number;
   private maxLossPerTradePct: number;
   private maxDailyLossEth: number;
   private recentTrades: TradePnLEntry[] = [];
   private manuallyTripped: boolean = false;
 
   constructor(config: CircuitBreakerConfig) {
+    this.maxTakeProfitPct = config.maxTakeProfitPct ?? 30.0;
     this.maxLossPerTradePct = config.maxLossPerTradePct;
     this.maxDailyLossEth = config.maxDailyLossEth;
+  }
+
+  public clampTakeProfit(proposedTakeProfitPct: number): number {
+    return Math.min(proposedTakeProfitPct, this.maxTakeProfitPct);
   }
 
   public clampStopLoss(proposedStopLossPct: number): number {

@@ -143,7 +143,10 @@ export class ScalpingOrchestrator {
     let tradesOpened = 0;
 
     for (const pair of pairs.slice(0, 5)) {
-      // 1. Pre-Screening (Security & Liquidity)
+      // 1. Calculate Quantitative Microstructure Metrics
+      const metrics = calculateMicrostructureMetrics(pair);
+
+      // 2. Pre-Screening (Security, Liquidity & Anti-Dump)
       const screenResult = this.screener.screenToken({
         pairAddress: pair.pairAddress,
         liquidityUsd: pair.liquidity?.usd ?? 0,
@@ -151,12 +154,11 @@ export class ScalpingOrchestrator {
         sellTax: 0,
         isHoneypot: false,
         isOpenTrading: true,
+        priceChange5m: pair.priceChange?.m5,
+        sellVolumeRatio: (1 - metrics.buyPressureRatio5m),
       });
 
       if (!screenResult.isSafe) continue;
-
-      // 2. Calculate Quantitative Microstructure Metrics
-      const metrics = calculateMicrostructureMetrics(pair);
       if (!metrics.isOrderFlowBullish) continue;
 
       // 3. AI Scalping Evaluation (OpenRouter)
@@ -170,7 +172,8 @@ export class ScalpingOrchestrator {
       });
 
       if (decision.action === 'BUY' && decision.confidence >= this.minAiConfidence) {
-        // Enforce hard-stop clamp
+        // Enforce hard-stop & max take-profit clamp (TP max 30%, SL max 10%)
+        const clampedTP = this.circuitBreaker.clampTakeProfit(decision.takeProfitPct);
         const clampedSL = this.circuitBreaker.clampStopLoss(decision.stopLossPct);
 
         const buyResult = await this.engine.executeBuy({
@@ -179,7 +182,7 @@ export class ScalpingOrchestrator {
           tokenSymbol: pair.baseToken.symbol,
           amountEth: Math.min(decision.suggestedAllocEth, this.defaultTradeSizeEth),
           currentPriceUsd: metrics.priceUsd,
-          takeProfitPct: decision.takeProfitPct,
+          takeProfitPct: clampedTP,
           stopLossPct: clampedSL,
           trailingStopPct: 3.0,
         });
@@ -194,7 +197,7 @@ export class ScalpingOrchestrator {
               tokenAddress: pair.baseToken.address,
               entryPriceUsd: metrics.priceUsd,
               amountEth: this.defaultTradeSizeEth,
-              takeProfitPct: decision.takeProfitPct,
+              takeProfitPct: clampedTP,
               stopLossPct: clampedSL,
               confidence: decision.confidence,
               reasoning: decision.reasoning,
