@@ -117,15 +117,21 @@ export function registerCallbacks(
   });
 
   bot.callbackQuery('view_positions', async (ctx: Context) => {
+    await ctx.answerCallbackQuery('🔄 Memperbarui harga live...').catch(() => {});
     const positions = await context.getActivePositions();
-    const maxLimit = context.getSettings?.().MAX_CONCURRENT_POSITIONS ?? 3;
+    const settings = context.getSettings?.();
+    const maxLimit = settings?.maxConcurrentPositions ?? settings?.MAX_CONCURRENT_POSITIONS ?? 3;
 
     if (positions.length === 0) {
-      await ctx.reply(formatActivePositionsCard([], maxLimit), {
-        parse_mode: 'HTML',
-        reply_markup: new InlineKeyboard().text('🔙 Menu Utama', 'refresh_status'),
+      const text = formatActivePositionsCard([], maxLimit);
+      const keyboard = new InlineKeyboard()
+        .text('🔄 Refresh Posisi', 'view_positions')
+        .text('🔙 Menu Utama', 'refresh_status');
+      await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard }).catch(async (err: any) => {
+        if (!err?.message?.includes('message is not modified')) {
+          await ctx.reply(text, { parse_mode: 'HTML', reply_markup: keyboard }).catch(() => {});
+        }
       });
-      await ctx.answerCallbackQuery('Tidak ada posisi aktif saat ini.');
       return;
     }
 
@@ -164,8 +170,12 @@ export function registerCallbacks(
     }
     keyboard.row().text('🔙 Menu Utama', 'refresh_status');
 
-    await ctx.reply(text, { parse_mode: 'HTML', reply_markup: keyboard });
-    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard }).catch(async (err: any) => {
+      // If message is not modified because price hasn't ticked yet, ignore gracefully
+      if (!err?.message?.includes('message is not modified')) {
+        await ctx.reply(text, { parse_mode: 'HTML', reply_markup: keyboard }).catch(() => {});
+      }
+    });
   });
 
   bot.callbackQuery('view_feed', async (ctx: Context) => {
