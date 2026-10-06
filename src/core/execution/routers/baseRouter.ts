@@ -66,11 +66,47 @@ export class BaseRouterExecutor {
         chain: null,
       });
 
+      const publicClient = this.viemManager.getPublicClient(8453);
+      const receipt = await publicClient.waitForTransactionReceipt({
+        hash: txHash,
+        timeout: 30000,
+      });
+
+      if (receipt.status !== 'success') {
+        return {
+          success: false,
+          txHash,
+          error: `Base swap execution reverted on-chain (status: ${receipt.status})`,
+        };
+      }
+
+      // Query actual on-chain token balance received
+      let tokenUnits = (order.amountEth * rateService.getEthPriceUsd()) / order.currentPriceUsd;
+      try {
+        const [tokenBal, decimals] = await Promise.all([
+          publicClient.readContract({
+            address: order.tokenAddress as `0x${string}`,
+            abi: ERC20_ABI,
+            functionName: 'balanceOf',
+            args: [account.address],
+          }),
+          publicClient.readContract({
+            address: order.tokenAddress as `0x${string}`,
+            abi: ERC20_ABI,
+            functionName: 'decimals',
+          }).catch(() => 18),
+        ]);
+        if (tokenBal > 0n) {
+          tokenUnits = Number(tokenBal) / 10 ** Number(decimals);
+        }
+      } catch {
+        // Fallback to estimated token units if RPC query fails
+      }
+
       return {
         success: true,
         txHash,
-        // BUG-07 FIX: Use real-time ETH price instead of hardcoded $2500
-        amountTokens: (order.amountEth * rateService.getEthPriceUsd()) / order.currentPriceUsd,
+        amountTokens: tokenUnits,
         filledPriceUsd: order.currentPriceUsd,
       };
     } catch (err) {
@@ -171,6 +207,19 @@ export class BaseRouterExecutor {
         data: sellData,
         chain: null,
       });
+
+      const receipt = await publicClient.waitForTransactionReceipt({
+        hash: txHash,
+        timeout: 30000,
+      });
+
+      if (receipt.status !== 'success') {
+        return {
+          success: false,
+          txHash,
+          error: `Base sell swap reverted on-chain (status: ${receipt.status})`,
+        };
+      }
 
       return {
         success: true,
