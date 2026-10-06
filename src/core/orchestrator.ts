@@ -26,6 +26,7 @@ import { reconcilePositionsOnChain, ReconciliationSummary } from './positions/re
 
 import { ExpectedValueCalculator } from './risk/evCalculator.js';
 import { TokenSecurityScorer } from './screener/securityScore.js';
+import { TokenSecurityService, securityService } from './services/securityService.js';
 import { NewPoolsScanner, NewPoolCandidate } from './scanner/newPools.js';
 
 export interface AiDebateInfo {
@@ -131,6 +132,7 @@ export class ScalpingOrchestrator {
   private onAiDebate?: (debate: AiDebateInfo) => Promise<void>;
   private onRiskEvaluation?: (risk: RiskEvaluationInfo) => Promise<void>;
   private isScanningNewPools: boolean = false;
+  private securityService: TokenSecurityService;
 
   constructor(config: OrchestratorConfig) {
     this.storage = config.storage;
@@ -143,6 +145,7 @@ export class ScalpingOrchestrator {
     });
     this.evCalculator = new ExpectedValueCalculator(config.minRequiredEdgePct ?? 1.5);
     this.securityScorer = new TokenSecurityScorer(config.minSecurityScore ?? 80);
+    this.securityService = securityService;
     this.maxConcurrentPositions = config.maxConcurrentPositions ?? 3;
     this.sniperAiPreVeto = config.sniperAiPreVeto ?? true;
     this.newTokenScanner = new NewPoolsScanner({
@@ -375,15 +378,13 @@ export class ScalpingOrchestrator {
       const metrics = calculateMicrostructureMetrics(pair);
 
       // 2. Pre-Screening: Multi-Factor Token Security Score (0-100)
-      const securityScoreResult = this.securityScorer.calculateScore({
-        canSell: true,
-        isHoneypot: false,
-        buyTaxPct: 0,
-        sellTaxPct: 0,
-        liquidityUsd: pair.liquidity?.usd ?? 0,
-        fdvUsd: pair.fdv,
-        isOpenTrading: true,
-      });
+      const securityFactors = await this.securityService.fetchSecurityData(
+        chainId,
+        pair.baseToken.address,
+        pair.liquidity?.usd ?? 0,
+        pair.fdv
+      );
+      const securityScoreResult = this.securityScorer.calculateScore(securityFactors);
 
       if (this.onRiskEvaluation) {
         await this.onRiskEvaluation({
@@ -1046,16 +1047,14 @@ export class ScalpingOrchestrator {
 
       const effectiveLiquidity = realQuoteReserveUsd && realQuoteReserveUsd > 0 ? realQuoteReserveUsd * 2 : candidate.liquidityUsd;
 
-      // 5. Fast security check with effective real liquidity
-      const secScore = this.securityScorer.calculateScore({
-        canSell: true,
-        isHoneypot: false,
-        buyTaxPct: 0,
-        sellTaxPct: 0,
-        liquidityUsd: effectiveLiquidity,
-        fdvUsd: actualFdv,
-        isOpenTrading: true,
-      });
+      // 5. Fast security check with real GoPlus security data & effective real liquidity
+      const secFactors = await this.securityService.fetchSecurityData(
+        chainId,
+        candidate.baseTokenAddress,
+        effectiveLiquidity,
+        actualFdv
+      );
+      const secScore = this.securityScorer.calculateScore(secFactors);
 
       if (!secScore.passed) {
         this.newTokenScanner.markProcessed(candidate.baseTokenAddress);

@@ -6,6 +6,8 @@ export interface TokenSecurityFactors {
   liquidityUsd: number;
   fdvUsd?: number;
   isOpenTrading?: boolean;
+  holderCount?: number;
+  top10HolderPct?: number;
 }
 
 export interface SecurityScoreBreakdown {
@@ -13,6 +15,7 @@ export interface SecurityScoreBreakdown {
   taxScore: number;        // max 25 pts
   liquidityScore: number;  // max 25 pts
   fdvRatioScore: number;   // max 15 pts
+  holderScore?: number;    // max 20 pts
 }
 
 export interface TokenSecurityScoreResult {
@@ -88,9 +91,32 @@ export class TokenSecurityScorer {
       }
     }
 
+    // 5. Holder Distribution & Concentration Check (Max 20 pts when data is present)
+    let holderScore: number | undefined;
+    let holderPenalty = 0;
+    if (factors.holderCount !== undefined || factors.top10HolderPct !== undefined) {
+      holderScore = 20;
+      if (factors.top10HolderPct !== undefined) {
+        if (factors.top10HolderPct > 70) {
+          holderScore = 0;
+          reasons.push(`Holder concentration penalty: Top 10 wallets hold ${factors.top10HolderPct}% of total supply (>70%).`);
+        } else if (factors.top10HolderPct > 50) {
+          holderScore = 10;
+          reasons.push(`Moderate holder concentration: Top 10 wallets hold ${factors.top10HolderPct}% of supply.`);
+        }
+      }
+
+      if (factors.holderCount !== undefined && factors.holderCount < 30) {
+        holderScore = 0;
+        reasons.push(`Low holder count penalty: Only ${factors.holderCount} unique holders (<30).`);
+      }
+
+      holderPenalty = 20 - holderScore;
+    }
+
     // If critical simulation fails, total score is forced to 0
-    let totalScore = simulationScore + taxScore + liquidityScore + fdvRatioScore;
-    if (simulationScore === 0) {
+    let totalScore = simulationScore + taxScore + liquidityScore + fdvRatioScore - holderPenalty;
+    if (simulationScore === 0 || totalScore < 0) {
       totalScore = 0;
     }
 
@@ -105,6 +131,7 @@ export class TokenSecurityScorer {
         taxScore,
         liquidityScore,
         fdvRatioScore,
+        ...(holderScore !== undefined ? { holderScore } : {}),
       },
       reasons,
     };
