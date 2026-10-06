@@ -30,6 +30,8 @@ class WalletService {
   private walletAddress: string | null = null;
   private lastBaseBalance: number | null = null;
   private lastRobinhoodBalance: number | null = null;
+  private lastSuccessfulBaseBalance: number | null = null;
+  private lastSuccessfulRhBalance: number | null = null;
   private onDepositCallbacks: ((deposit: DepositNotificationData) => Promise<void> | void)[] = [];
   private watcherTimer: NodeJS.Timeout | null = null;
 
@@ -133,11 +135,11 @@ class WalletService {
 
       const balanceBaseEth = baseWeiResult !== null
         ? parseFloat(formatEther(baseWeiResult))
-        : (this.lastBaseBalance ?? 0);
+        : (this.lastSuccessfulBaseBalance ?? this.lastBaseBalance ?? 0);
 
       const balanceRobinhoodEth = rhWeiResult !== null
         ? parseFloat(formatEther(rhWeiResult))
-        : (this.lastRobinhoodBalance ?? 0);
+        : (this.lastSuccessfulRhBalance ?? this.lastRobinhoodBalance ?? 0);
 
       const balanceTotalEth = balanceBaseEth + balanceRobinhoodEth;
       const rates = rateService.getRates();
@@ -160,6 +162,7 @@ class WalletService {
           });
         }
         this.lastBaseBalance = balanceBaseEth;
+        this.lastSuccessfulBaseBalance = balanceBaseEth;  // Track successful fetch
       }
 
       if (!rhFailed && rhWeiResult !== null) {
@@ -176,6 +179,7 @@ class WalletService {
           });
         }
         this.lastRobinhoodBalance = balanceRobinhoodEth;
+        this.lastSuccessfulRhBalance = balanceRobinhoodEth;  // Track successful fetch
       }
 
       const snapshot: WalletSnapshot = {

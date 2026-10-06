@@ -102,8 +102,16 @@ export class PositionTicker {
           await this.onPartialTakeProfit(pos, currentPrice, 50);
         }
         await this.tracker.markPartialTakeProfit(pos.id, -1.0);
-        // Position remains OPEN with updated state
-        continue;
+        // Re-fetch position from DB to get updated state (stopLossPct, partialTakeProfitDone)
+        const refreshedPos = await this.tracker.getPositionById(pos.id);
+        if (!refreshedPos) {
+          // Position was closed during partial TP execution
+          this.lastPrices.delete(pos.id);
+          this.tickHistories.delete(pos.id);
+          continue;
+        }
+        // Update reference to use refreshed state for subsequent checks
+        Object.assign(pos, refreshedPos);
       }
 
       // 3. Trailing stop check (if in profit >= 8% and dropped >= trailingStopPct from peak)
@@ -165,6 +173,18 @@ export class PositionTicker {
       try {
         const prices = await priceFetcher();
         await this.checkPositionsWithPrices(prices);
+        
+        // Periodic cleanup: remove stale entries for closed positions
+        const activePositions = await this.tracker.getActivePositions();
+        const activeIds = new Set(activePositions.map((p) => p.id));
+        
+        for (const posId of this.lastPrices.keys()) {
+          if (!activeIds.has(posId)) {
+            this.lastPrices.delete(posId);
+            this.tickHistories.delete(posId);
+            this.missingPriceCounts.delete(posId);
+          }
+        }
       } catch (err) {
         console.warn(`Position ticker error: ${(err as Error).message}`);
       }
@@ -185,5 +205,9 @@ export class PositionTicker {
       this.timer = null;
     }
     this.isRunning = false;
+    // Clean up all maps on shutdown to prevent memory leaks
+    this.lastPrices.clear();
+    this.tickHistories.clear();
+    this.missingPriceCounts.clear();
   }
 }

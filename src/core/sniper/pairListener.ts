@@ -32,8 +32,13 @@ export class PairListener {
         event: pairCreatedEvent,
         onLogs: async (logs) => {
           for (const log of logs) {
-            const args = (log as any).args;
-            if (args) {
+            try {
+              const args = (log as any).args;
+              // Validate required fields before processing
+              if (!args || !args.token0 || !args.token1 || !args.pair) {
+                console.warn(`⚠️ [PairListener] Malformed PairCreated event, missing required fields`);
+                continue;
+              }
               await onNewPair({
                 chainId,
                 token0: args.token0,
@@ -41,6 +46,8 @@ export class PairListener {
                 pairAddress: args.pair,
                 timestamp: Date.now(),
               });
+            } catch (err) {
+              console.error(`⚠️ [PairListener] Error processing event log:`, (err as Error).message);
             }
           }
         },
@@ -56,12 +63,20 @@ export class PairListener {
     if (chainId) {
       const unwatch = this.unwatchers.get(chainId);
       if (unwatch) {
-        unwatch();
+        try {
+          unwatch();
+        } catch (err) {
+          console.error(`⚠️ [PairListener] Failed to unwatch chain ${chainId}:`, (err as Error).message);
+        }
         this.unwatchers.delete(chainId);
       }
     } else {
-      for (const [_, unwatch] of this.unwatchers) {
-        unwatch();
+      for (const [cId, unwatch] of this.unwatchers) {
+        try {
+          unwatch();
+        } catch (err) {
+          console.error(`⚠️ [PairListener] Failed to unwatch chain ${cId}:`, (err as Error).message);
+        }
       }
       this.unwatchers.clear();
     }

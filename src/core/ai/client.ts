@@ -56,8 +56,15 @@ export class AiScalpEngine {
     );
 
     const content = response.data?.choices?.[0]?.message?.content;
-    if (!content) {
-      throw new Error('Empty response received from LLM');
+    if (!content || typeof content !== 'string') {
+      throw new Error('Empty or invalid response received from LLM');
+    }
+
+    // Validate it's valid JSON before returning
+    try {
+      JSON.parse(content);
+    } catch (parseErr) {
+      throw new Error(`LLM returned non-JSON content: ${content.substring(0, 100)}`);
     }
 
     return content;

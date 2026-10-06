@@ -21,8 +21,8 @@ export async function fetchLiveTokenPrices(tokenAddresses: string[]): Promise<Re
         if (addr && !isNaN(price) && price > 0) {
           const lower = addr.toLowerCase();
           // Keep the highest liquidity pair if multiple pairs exist
+          // Always use lowercase key for consistent lookups
           if (!priceMap[lower] || (pair.liquidity?.usd ?? 0) > 1000) {
-            priceMap[addr] = price;
             priceMap[lower] = price;
           }
         }

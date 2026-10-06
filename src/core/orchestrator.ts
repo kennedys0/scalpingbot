@@ -234,7 +234,9 @@ export class ScalpingOrchestrator {
     }
     console.log(`[${entry.stage}] ${entry.message}`);
     if (this.onAiActivity) {
-      this.onAiActivity(fullEntry).catch(() => {});
+      this.onAiActivity(fullEntry).catch((err) => {
+        console.error(`⚠️ [CALLBACK ERROR] onAiActivity failed:`, (err as Error).message);
+      });
     }
   }
 
@@ -525,7 +527,9 @@ export class ScalpingOrchestrator {
             hunterDecision: { action: 'BUY', confidence: 80, reasoning: 'Quantitative order flow and metrics passed pre-screening.' },
             auditorDecision: verdict,
             consensus: { action: decisionAction, consensusScore: confidence, takeProfitPct, stopLossPct },
-          }).catch(() => {});
+          }).catch((err) => {
+            console.error(`⚠️ [CALLBACK ERROR] onAiDebate failed:`, (err as Error).message);
+          });
         }
       } else {
         // Mode C: Dual-Agent Debate Engine (Hunter vs Auditor Consensus)
@@ -550,7 +554,8 @@ export class ScalpingOrchestrator {
             reasoning = `[Hunter]: ${debate.hunterReasoning} | [Auditor]: ${debate.auditorReasoning}`;
             signalsDetected = debate.signalsDetected;
           }
-        } catch {
+        } catch (err) {
+          console.error(`⚠️ [DEBATE ENGINE FALLBACK] Debate failed, using single AI evaluator:`, (err as Error).message);
           const single = await aiClient.evaluateToken(candidateInput);
           decisionAction = single.action;
           confidence = single.confidence;
@@ -569,7 +574,9 @@ export class ScalpingOrchestrator {
             hunterDecision: debate.hunterVerdict || { action: 'BUY', confidence: debate.consensusScore, reasoning: debate.hunterReasoning },
             auditorDecision: debate.auditorVerdict || { action: debate.action, confidence: debate.consensusScore, reasoning: debate.auditorReasoning },
             consensus: debate,
-          }).catch(() => {});
+          }).catch((err) => {
+            console.error(`⚠️ [CALLBACK ERROR] onAiDebate failed:`, (err as Error).message);
+          });
         }
       }
 

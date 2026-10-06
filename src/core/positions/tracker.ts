@@ -36,15 +36,34 @@ export class PositionTracker {
 
   public async openPosition(pos: Position): Promise<Position> {
     pos.highestPriceSeen = pos.entryPriceUsd;
+    let openFailed = false;
+    
     this.storage.update((data) => {
-      // Defensive duplicate check: do not push if token is already open
-      const isAlreadyOpen = data.positions.some(
-        (p: Position) => p.status === 'OPEN' && p.tokenAddress.toLowerCase() === pos.tokenAddress.toLowerCase()
+      // Atomic: Check concurrent limit + duplicate + insert in one transaction
+      const activePositions = data.positions.filter((p: Position) => p.status === 'OPEN');
+      
+      // 1. Check concurrent position limit (prevent race condition overflow)
+      const maxConcurrent = 3; // Should be injected from config, but atomic check is critical
+      if (activePositions.length >= maxConcurrent) {
+        openFailed = true;
+        return;
+      }
+      
+      // 2. Defensive duplicate check: do not push if token is already open
+      const isAlreadyOpen = activePositions.some(
+        (p: Position) => p.tokenAddress.toLowerCase() === pos.tokenAddress.toLowerCase()
       );
       if (!isAlreadyOpen) {
         data.positions.push(pos);
+      } else {
+        openFailed = true;
       }
     });
+    
+    if (openFailed) {
+      throw new Error(`Cannot open position: concurrent limit exceeded or duplicate token already open`);
+    }
+    
     return pos;
   }
 

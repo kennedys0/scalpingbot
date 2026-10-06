@@ -54,26 +54,31 @@ export class ExecutionEngine {
     if (result.success && result.amountTokens) {
       const positionId = `pos_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       const positionMode = isRhLiveGuard ? 'paper' : this.mode;
-      await this.tracker.openPosition({
-        id: positionId,
-        chainId: order.chainId,
-        tokenAddress: order.tokenAddress,
-        tokenSymbol: order.tokenSymbol,
-        entryPriceUsd: result.filledPriceUsd || order.currentPriceUsd,
-        amountTokens: result.amountTokens,
-        costEth: order.amountEth,
-        takeProfitPct: order.takeProfitPct,
-        stopLossPct: order.stopLossPct,
-        trailingStopPct: order.trailingStopPct,
-        mode: positionMode,
-        strategyMode: order.strategyMode,
-        aiScore: order.aiScore,
-        status: 'OPEN',
-        openedAt: Date.now(),
-        txHash: result.txHash,
-      });
-
-      result.positionId = positionId;
+      try {
+        await this.tracker.openPosition({
+          id: positionId,
+          chainId: order.chainId,
+          tokenAddress: order.tokenAddress,
+          tokenSymbol: order.tokenSymbol,
+          entryPriceUsd: result.filledPriceUsd || order.currentPriceUsd,
+          amountTokens: result.amountTokens,
+          costEth: order.amountEth,
+          takeProfitPct: order.takeProfitPct,
+          stopLossPct: order.stopLossPct,
+          trailingStopPct: order.trailingStopPct,
+          mode: positionMode,
+          strategyMode: order.strategyMode,
+          aiScore: order.aiScore,
+          status: 'OPEN',
+          openedAt: Date.now(),
+          txHash: result.txHash,
+        });
+        result.positionId = positionId;
+      } catch (err) {
+        console.error(`⚠️ [ExecutionEngine] Failed to track position ${positionId}:`, (err as Error).message);
+        result.success = false;
+        result.error = `Position tracking failed: ${(err as Error).message}`;
+      }
     }
 
     return result;

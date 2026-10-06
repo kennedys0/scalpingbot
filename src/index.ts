@@ -179,9 +179,14 @@ async function bootstrap() {
   // BUG-02 FIX: Start the position ticker (TP/SL/Trailing Stop/Anti-Dump engine)
   // Uses ultra-fast batch DexScreener to get live prices for all open positions
   orchestrator.startPositionTicker(5000, async () => {
-    const positions = await orchestrator.getPositionTracker().getActivePositions();
-    if (positions.length === 0) return {};
-    return await fetchLiveTokenPrices(positions.map((p) => p.tokenAddress));
+    try {
+      const positions = await orchestrator.getPositionTracker().getActivePositions();
+      if (positions.length === 0) return {};
+      return await fetchLiveTokenPrices(positions.map((p) => p.tokenAddress));
+    } catch (err) {
+      console.error(`⚠️ [Position Ticker] Price fetch failed:`, (err as Error).message);
+      return {}; // Return empty price map; let ticker skip price update this cycle
+    }
   });
 
   // Start background scanner

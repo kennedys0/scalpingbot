@@ -27,11 +27,19 @@ export class DualAgentDebateEngine {
   }
 
   public async debateToken(input: ScalpCandidateInput): Promise<ConsensusDecision> {
-    // Run both AI evaluations concurrently: Hunter (Momentum) vs Auditor (Indonesian Risk Auditor)
-    const [hunterVerdict, auditorVerdict] = await Promise.all([
+    // Run both AI evaluations concurrently with 30s timeout (both APIs max 35s, so 30s total debate timeout gives buffer)
+    const DEBATE_TIMEOUT_MS = 30000;
+    
+    const debatePromise = Promise.all([
       this.hunter.evaluateToken(input, 'hunter'),
       this.auditor.evaluateToken(input, 'auditor'),
     ]);
+    
+    const timeoutPromise = new Promise<never>((_, reject) => 
+      setTimeout(() => reject(new Error('Debate engine timeout after 30s')), DEBATE_TIMEOUT_MS)
+    );
+    
+    const [hunterVerdict, auditorVerdict] = await Promise.race([debatePromise, timeoutPromise]);
 
     // Average confidence score
     const consensusScore = Math.round((hunterVerdict.confidence + auditorVerdict.confidence) / 2);
