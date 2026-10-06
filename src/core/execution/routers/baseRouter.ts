@@ -1,4 +1,4 @@
-import { parseEther, parseAbi, encodeFunctionData, maxUint256 } from 'viem';
+import { parseEther, formatEther, parseAbi, encodeFunctionData, maxUint256 } from 'viem';
 import { ViemClientManager } from '../viemClient.js';
 import { BuyOrderParams, BuyResult, SellResult } from '../types.js';
 import { Position } from '../../positions/tracker.js';
@@ -197,8 +197,13 @@ export class BaseRouterExecutor {
         ],
       });
 
-      const pnlPct = ((currentPriceUsd - position.entryPriceUsd) / position.entryPriceUsd) * 100;
-      const realizedPnlEth = position.costEth * (pnlPct / 100);
+      // Measure wallet balance before sell
+      let balanceBefore: bigint | undefined;
+      try {
+        balanceBefore = await publicClient.getBalance({ address: account.address });
+      } catch {
+        // Fallback if getBalance RPC fails
+      }
 
       const txHash = await wallet.sendTransaction({
         account,
@@ -221,10 +226,30 @@ export class BaseRouterExecutor {
         };
       }
 
+      let realizedPnlEth: number;
+      let realizedPnlPct: number;
+
+      if (balanceBefore !== undefined) {
+        try {
+          const balanceAfter = await publicClient.getBalance({ address: account.address });
+          const netReceivedEth = Number(formatEther(balanceAfter - balanceBefore));
+          realizedPnlEth = netReceivedEth - position.costEth;
+          realizedPnlPct = (realizedPnlEth / position.costEth) * 100;
+        } catch {
+          const pnlPct = ((currentPriceUsd - position.entryPriceUsd) / position.entryPriceUsd) * 100;
+          realizedPnlEth = position.costEth * (pnlPct / 100);
+          realizedPnlPct = pnlPct;
+        }
+      } else {
+        const pnlPct = ((currentPriceUsd - position.entryPriceUsd) / position.entryPriceUsd) * 100;
+        realizedPnlEth = position.costEth * (pnlPct / 100);
+        realizedPnlPct = pnlPct;
+      }
+
       return {
         success: true,
         realizedPnlEth,
-        realizedPnlPct: pnlPct,
+        realizedPnlPct,
         filledPriceUsd: currentPriceUsd,
         txHash,
       };
