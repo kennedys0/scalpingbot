@@ -54,6 +54,15 @@ export class PositionTracker {
     return active.some((p) => p.tokenAddress.toLowerCase() === normalized);
   }
 
+  public async hasOpenPositionForSymbol(symbol: string): Promise<boolean> {
+    const active = await this.getActivePositions();
+    const cleanTarget = symbol.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    return active.some((p) => {
+      const cleanExisting = p.tokenSymbol.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      return cleanExisting === cleanTarget;
+    });
+  }
+
   public async getActivePositionsCount(chainId?: number): Promise<number> {
     const active = await this.getActivePositions(chainId);
     return active.length;

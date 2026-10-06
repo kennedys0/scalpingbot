@@ -360,8 +360,9 @@ export class ScalpingOrchestrator {
         break;
       }
 
-      // Deduplication: Never open duplicate position for token already held
-      if (await this.tracker.hasOpenPositionForToken(pair.baseToken.address)) {
+      // Deduplication: Never open duplicate position for token already held (by address or symbol)
+      if (await this.tracker.hasOpenPositionForToken(pair.baseToken.address) ||
+          await this.tracker.hasOpenPositionForSymbol(pair.baseToken.symbol)) {
         continue;
       }
 
@@ -937,8 +938,9 @@ export class ScalpingOrchestrator {
         break;
       }
 
-      // Deduplication: Never open duplicate position for token already held
-      if (await this.tracker.hasOpenPositionForToken(candidate.baseTokenAddress)) {
+      // Deduplication: Never open duplicate position for token already held (by address or symbol)
+      if (await this.tracker.hasOpenPositionForToken(candidate.baseTokenAddress) ||
+          await this.tracker.hasOpenPositionForSymbol(candidate.tokenSymbol)) {
         continue;
       }
 
