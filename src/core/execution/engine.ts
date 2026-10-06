@@ -37,8 +37,9 @@ export class ExecutionEngine {
 
   public async executeBuy(order: BuyOrderParams): Promise<BuyResult> {
     let result: BuyResult;
+    const isRhLiveGuard = order.chainId === 4663 && this.mode === 'live';
 
-    if (this.mode === 'paper' || this.mode === 'shadow') {
+    if (this.mode === 'paper' || this.mode === 'shadow' || isRhLiveGuard) {
       result = await this.paperTrader.simulateBuy(order, this.mode === 'shadow');
     } else {
       if (order.chainId === 8453) {
@@ -52,6 +53,7 @@ export class ExecutionEngine {
 
     if (result.success && result.amountTokens) {
       const positionId = `pos_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const positionMode = isRhLiveGuard ? 'paper' : this.mode;
       await this.tracker.openPosition({
         id: positionId,
         chainId: order.chainId,
@@ -63,7 +65,7 @@ export class ExecutionEngine {
         takeProfitPct: order.takeProfitPct,
         stopLossPct: order.stopLossPct,
         trailingStopPct: order.trailingStopPct,
-        mode: this.mode,
+        mode: positionMode,
         strategyMode: order.strategyMode,
         aiScore: order.aiScore,
         status: 'OPEN',
